@@ -1,9 +1,9 @@
 %% @author Mochi Media <dev@mochimedia.com>
 %% @copyright 2010 Mochi Media <dev@mochimedia.com>
 
-%% @doc Stolas.
+%% @doc stolas.
 
--module(Stolas).
+-module(stolas).
 -author("Mochi Media <dev@mochimedia.com>").
 -export([start/0, stop/0]).
 
@@ -17,14 +17,14 @@ ensure_started(App) ->
 
 
 %% @spec start() -> ok
-%% @doc Start the Stolas server.
+%% @doc Start the stolas server.
 start() ->
-    Stolas_deps:ensure(),
+    stolas_deps:ensure(),
     ensure_started(crypto),
-    application:start(Stolas).
+    application:start(stolas).
 
 
 %% @spec stop() -> ok
-%% @doc Stop the Stolas server.
+%% @doc Stop the stolas server.
 stop() ->
-    application:stop(Stolas).
+    application:stop(stolas).

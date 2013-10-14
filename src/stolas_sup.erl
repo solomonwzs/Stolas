@@ -1,9 +1,9 @@
 %% @author Mochi Media <dev@mochimedia.com>
 %% @copyright 2010 Mochi Media <dev@mochimedia.com>
 
-%% @doc Supervisor for the Stolas application.
+%% @doc Supervisor for the stolas application.
 
--module(Stolas_sup).
+-module(stolas_sup).
 -author("Mochi Media <dev@mochimedia.com>").
 
 -behaviour(supervisor).
@@ -41,7 +41,7 @@ upgrade() ->
 %% @spec init([]) -> SupervisorTree
 %% @doc supervisor callback.
 init([]) ->
-    Web = web_specs(Stolas_web, 8080),
+    Web = web_specs(stolas_web, 8080),
     Processes = [Web],
     Strategy = {one_for_one, 10, 10},
     {ok,
@@ -50,7 +50,7 @@ init([]) ->
 web_specs(Mod, Port) ->
     WebConfig = [{ip, {0,0,0,0}},
                  {port, Port},
-                 {docroot, Stolas_deps:local_path(["priv", "www"])}],
+                 {docroot, stolas_deps:local_path(["priv", "www"])}],
     {Mod,
      {Mod, start, [WebConfig]},
      permanent, 5000, worker, dynamic}.

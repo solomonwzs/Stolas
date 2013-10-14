@@ -1,9 +1,9 @@
 %% @author Mochi Media <dev@mochimedia.com>
-%% @copyright Stolas Mochi Media <dev@mochimedia.com>
+%% @copyright stolas Mochi Media <dev@mochimedia.com>
 
-%% @doc Callbacks for the Stolas application.
+%% @doc Callbacks for the stolas application.
 
--module(Stolas_app).
+-module(stolas_app).
 -author("Mochi Media <dev@mochimedia.com>").
 
 -behaviour(application).
@@ -11,12 +11,12 @@
 
 
 %% @spec start(_Type, _StartArgs) -> ServerRet
-%% @doc application start callback for Stolas.
+%% @doc application start callback for stolas.
 start(_Type, _StartArgs) ->
-    Stolas_deps:ensure(),
-    Stolas_sup:start_link().
+    stolas_deps:ensure(),
+    stolas_sup:start_link().
 
 %% @spec stop(_State) -> ServerRet
-%% @doc application stop callback for Stolas.
+%% @doc application stop callback for stolas.
 stop(_State) ->
     ok.

@@ -1,9 +1,9 @@
 %% -*- erlang -*-
-{application, Stolas,
- [{description, "Stolas"},
+{application, stolas,
+ [{description, "stolas"},
   {vsn, "0.1"},
   {modules, []},
   {registered, []},
-  {mod, {'Stolas_app', []}},
+  {mod, {'stolas_app', []}},
   {env, []},
   {applications, [kernel, stdlib, crypto]}]}.

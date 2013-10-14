@@ -1,9 +1,9 @@
 %% @author Mochi Media <dev@mochimedia.com>
 %% @copyright 2010 Mochi Media <dev@mochimedia.com>
 
-%% @doc Web server for Stolas.
+%% @doc Web server for stolas.
 
--module(Stolas_web).
+-module(stolas_web).
 -author("Mochi Media <dev@mochimedia.com>").
 
 -export([start/1, stop/0, loop/2]).
