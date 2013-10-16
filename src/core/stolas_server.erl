@@ -8,7 +8,9 @@
 -define(id(Name, Type), list_to_atom(lists:concat([Name, ":", Type]))).
 -define(sub_workspace(WorkSpace, X), filename:join(WorkSpace, X)).
 -define(broadcast_map_msg(Task, ThreadNum),
-    [gen_server:cast(?id(Task, X), map)||X<-lists:seq(1, ThreadNum)]).
+    lists:foreach(fun(X)->
+                gen_server:cast(?id(Task, X), map)
+        end, lists:seq(1, ThreadNum))).
 
 -record(manager_state, {
         task_sets::tuple()
@@ -132,10 +134,10 @@ handle_cast({init, InitArgs}, State) when is_record(State, master_state)->
         workspace=WorkSpace,
         mod=Mod
     }=State,
+    apply(Mod, init, [WorkSpace, InitArgs]),
     lists:foreach(fun(X)->
                 file:make_dir(?sub_workspace(WorkSpace, integer_to_list(X)))
         end, lists:seq(1, ThreadNum)),
-    apply(Mod, init, [WorkSpace, InitArgs]),
     ?broadcast_map_msg(Task, ThreadNum),
     {noreply, State};
 handle_cast(reduce, State) when is_record(State, master_state)->
@@ -145,11 +147,10 @@ handle_cast(reduce, State) when is_record(State, master_state)->
             apply(State#master_state.mod, reduce,
                 [State#master_state.workspace]),
             gen_server:cast(stolas_manager,
-                {close_task, State#master_state.task}),
-            {noreply, State};
-        true->
-            {noreply, State#master_state{finish_tasks=FinishTasks+1}}
-    end;
+                {close_task, State#master_state.task});
+        true->ok
+    end,
+    {noreply, State#master_state{finish_tasks=FinishTasks+1}};
 
 handle_cast({close_task, Task}, State) when is_record(State, manager_state)->
     TaskSets=State#manager_state.task_sets,

@@ -8,6 +8,5 @@
 start(Opt)->
     gen_server:call(stolas_manager, {new_task, Opt}).
 
-stop(Name)->
-    supervisor:terminate_child(stolas_sup, Name),
-    supervisor:delete_child(stolas_sup, Name).
+stop(Task)->
+    gen_server:call(stolas_manager, {close_task, Task}).
