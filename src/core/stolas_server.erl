@@ -134,11 +134,17 @@ handle_cast({init, InitArgs}, State) when is_record(State, master_state)->
         workspace=WorkSpace,
         mod=Mod
     }=State,
-    apply(Mod, init, [WorkSpace, InitArgs]),
-    lists:foreach(fun(X)->
-                file:make_dir(?sub_workspace(WorkSpace, integer_to_list(X)))
-        end, lists:seq(1, ThreadNum)),
-    ?broadcast_map_msg(Task, ThreadNum),
+    case apply(Mod, init, [WorkSpace, InitArgs]) of
+        ok->
+            lists:foreach(fun(X)->
+                        file:make_dir(?sub_workspace(WorkSpace,
+                                integer_to_list(X)))
+                end, lists:seq(1, ThreadNum)),
+            ?broadcast_map_msg(Task, ThreadNum);
+        R={error, _Reason}->
+            gen_server:cast(stolas_manager,
+                {close_task, State#master_state.task, R})
+    end,
     {noreply, State};
 handle_cast(reduce, State) when is_record(State, master_state)->
     FinishTasks=State#master_state.finish_tasks,
@@ -147,12 +153,13 @@ handle_cast(reduce, State) when is_record(State, master_state)->
             apply(State#master_state.mod, reduce,
                 [State#master_state.workspace]),
             gen_server:cast(stolas_manager,
-                {close_task, State#master_state.task});
+                {close_task, State#master_state.task, normal});
         true->ok
     end,
     {noreply, State#master_state{finish_tasks=FinishTasks+1}};
 
-handle_cast({close_task, Task}, State) when is_record(State, manager_state)->
+handle_cast({close_task, Task, _Reason}, State)
+        when is_record(State, manager_state)->
     TaskSets=State#manager_state.task_sets,
     case sets:is_element(Task, TaskSets) of
         true->
