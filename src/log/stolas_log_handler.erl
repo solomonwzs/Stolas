@@ -18,7 +18,7 @@ init([LogFilePath])->
 handle_event({Type, _Gleader, {_Pid, Format, Data}}, State) when Type=:=error
         orelse Type=:=waring_msg orelse Type=:=info_mag->
     file:write(State#handler_state.log_dev,
-        io_lib:format("~s [~p] "++Format, [?date_now, Type|Data])),
+        io_lib:format("~s [~p] "++Format++"~n", [?date_now, Type|Data])),
     {ok, State};
 handle_event({Type, _Gleader, {_Pid, _, Data}}, State)->
     file:write(State#handler_state.log_dev,
