@@ -17,6 +17,7 @@
     }).
 -record(worker_state, {
         mod::atom(),
+        name::atom(),
         workspace::string(),
         master::atom()
     }).
@@ -50,7 +51,7 @@ start_link(RegName, Opt)->
             Mod=proplists:get_value(mod, Opt),
             Master=proplists:get_value(master, Opt),
             gen_server:start_link({local, RegName}, ?MODULE,
-                [worker, Mod, Workspace, Master], [])
+                [worker, Mod, Workspace, Master, RegName], [])
     end.
 
 init([manager])->
@@ -65,10 +66,11 @@ init([master, Mod, Workspace, ThreadNum, Task])->
             task=Task,
             finish_tasks=0
         }};
-init([worker, Mod, Workspace, Master])->
+init([worker, Mod, Workspace, Master, RegName])->
     process_flag(trap_exit, true),
     {ok, #worker_state{
             mod=Mod,
+            name=RegName,
             workspace=Workspace,
             master=Master
         }}.
@@ -125,11 +127,21 @@ handle_call(_Msg, _From, State)->
     {reply, reply, State}.
 
 handle_cast(map, State) when is_record(State, worker_state)->
-    case apply(State#worker_state.mod, map, [State#worker_state.workspace]) of
-        ok->
-            gen_server:cast(State#worker_state.master, {reduce, ok});
-        R={error, _Reason}->
-            gen_server:cast(State#worker_state.master, {reduce, R})
+    #worker_state{
+        workspace=Workspace,
+        mod=Mod,
+        master=Master,
+        name=Name
+    }=State,
+    try
+        case apply(Mod, map, [Workspace]) of
+            ok->
+                gen_server:cast(Master, {reduce, {ok, Name}});
+            Reason={error, _}->
+                gen_server:cast(Master, {reduce, Name, Reason})
+        end
+    catch
+        T:R->gen_server:cast(Master, {reduce, Name, {error, {T, R}}})
     end,
     {noreply, State};
 
@@ -140,24 +152,34 @@ handle_cast({init, InitArgs}, State) when is_record(State, master_state)->
         workspace=Workspace,
         mod=Mod
     }=State,
-    case apply(Mod, init, [Workspace, InitArgs]) of
-        ok->
-            lists:foreach(fun(X)->
-                        file:make_dir(?sub_workspace(Workspace,
-                                integer_to_list(X)))
-                end, lists:seq(1, ThreadNum)),
-            ?broadcast_map_msg(Task, ThreadNum);
-        {error, Reason}->
-            gen_server:cast(stolas_manager,
+    try
+        case apply(Mod, init, [Workspace, InitArgs]) of
+            ok->
+                lists:foreach(fun(X)->
+                            file:make_dir(?sub_workspace(Workspace,
+                                    integer_to_list(X)))
+                    end, lists:seq(1, ThreadNum)),
+                ?broadcast_map_msg(Task, ThreadNum);
+            {error, Reason}->
+                gen_server:cast(stolas_manager,
+                    {close_task, Task, #failure_msg{
+                            task=Task,
+                            role=master,
+                            reason=Reason,
+                            msg="Task initialization failed"
+                        }})
+        end
+    catch
+        T:R->gen_server:cast(stolas_manager,
                 {close_task, Task, #failure_msg{
                         task=Task,
                         role=master,
-                        reason=Reason,
-                        msg="Task initialization failed"
+                        reason={T, R},
+                        msg="unexpected error"
                     }})
     end,
     {noreply, State};
-handle_cast({reduce, ok}, State) when is_record(State, master_state)->
+handle_cast({reduce, {ok, Name}}, State) when is_record(State, master_state)->
     #master_state{
         finish_tasks=FinishTasks,
         mod=Mod,
@@ -165,27 +187,39 @@ handle_cast({reduce, ok}, State) when is_record(State, master_state)->
         thread_num=ThreadNum,
         task=Task
     }=State,
+    error_logger:info_msg("Task:~p, Worker:~p map finish", [Task, Name]),
     if
         FinishTasks+1=:=ThreadNum->
-            case apply(Mod, reduce, [Workspace]) of
-                ok->
-                    gen_server:cast(stolas_manager,
-                        {close_task, Task, normal});
-                {error, Reason}->
-                    gen_server:cast(stolas_manager,
+            try
+                case apply(Mod, reduce, [Workspace]) of
+                    ok->
+                        gen_server:cast(stolas_manager,
+                            {close_task, Task, normal});
+                    {error, Reason}->
+                        gen_server:cast(stolas_manager,
+                            {close_task, Task, #failure_msg{
+                                    task=Task,
+                                    role=master,
+                                    reason=Reason,
+                                    msg="Task reduce failed"
+                                }})
+                end
+            catch
+                T:R->gen_server:cast(stolas_manager,
                         {close_task, Task, #failure_msg{
                                 task=Task,
                                 role=master,
-                                reason=Reason,
-                                msg="Task reduce failed"
+                                reason={T, R},
+                                msg="unexpected error"
                             }})
             end;
         true->ok
     end,
     {noreply, State#master_state{finish_tasks=FinishTasks+1}};
-handle_cast({reduce, {error, Reason}}, State)
+handle_cast({reduce, {error, Name, Reason}}, State)
         when is_record(State, master_state)->
     Task=State#master_state.task,
+    error_logger:info_msg("Task:~p, Worker:~p map failed", [Task, Name]),
     gen_server:cast(stolas_manager, Task, #failure_msg{
             task=Task,
             role=worker,
@@ -195,16 +229,18 @@ handle_cast({reduce, {error, Reason}}, State)
     {noreply, State};
 
 handle_cast({close_task, Task, Res}, State)
-        when is_record(State, manager_state)
-        andalso (Res=:=ok orelse is_record(Res, failure_msg))->
+        when is_record(State, manager_state)->
     TaskSets=State#manager_state.task_sets,
     case sets:is_element(Task, TaskSets) of
         true->
             supervisor:terminate_child(stolas_sup, Task),
             supervisor:delete_child(stolas_sup, Task),
             if
-                Res=:=ok->
+                Res=:=normal->
                     error_logger:info_msg("Task:~p completed", [Task]);
+                Res=:=force->
+                    error_logger:info_msg("Task:~p was closed forcibly",
+                        [Task]);
                 is_record(Res, failure_msg)->
                     #failure_msg{
                         role=Role,

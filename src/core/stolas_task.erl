@@ -9,4 +9,4 @@ start(Opt)->
     gen_server:call(stolas_manager, {new_task, Opt}).
 
 stop(Task)->
-    gen_server:call(stolas_manager, {close_task, Task}).
+    gen_server:call(stolas_manager, {close_task, Task, force}).
