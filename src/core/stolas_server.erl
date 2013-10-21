@@ -13,7 +13,8 @@
         end, lists:seq(1, ThreadNum))).
 
 -record(manager_state, {
-        task_sets::tuple()
+        task_sets::tuple(),
+        config_nodes::list(atom())
     }).
 -record(worker_state, {
         mod::atom(),
@@ -45,7 +46,9 @@ start_link(RegName, Opt)->
             gen_server:start_link({local, RegName}, ?MODULE,
                 [master, Mod, Workspace, ThreadNum, Task], []);
         manager->
-            gen_server:start_link({local, RegName}, ?MODULE, [manager], []);
+            Nodes=proplists:get_value(nodes, Opt, [node()]),
+            gen_server:start_link({local, RegName}, ?MODULE, [manager, Nodes],
+                []);
         worker->
             Workspace=proplists:get_value(workspace, Opt),
             Mod=proplists:get_value(mod, Opt),
@@ -54,9 +57,12 @@ start_link(RegName, Opt)->
                 [worker, Mod, Workspace, Master, RegName], [])
     end.
 
-init([manager])->
+init([manager, Nodes])->
     process_flag(trap_exit, true),
-    {ok, #manager_state{task_sets=sets:new()}};
+    {ok, #manager_state{
+            task_sets=sets:new(),
+            config_nodes=Nodes
+        }};
 init([master, Mod, Workspace, ThreadNum, Task])->
     process_flag(trap_exit, true),
     {ok, #master_state{
@@ -75,7 +81,10 @@ init([worker, Mod, Workspace, Master, RegName])->
             master=Master
         }}.
 
-handle_call({new_task, Opt}, _From, State)
+handle_call({new_task, sub, Opt}, _From, State)
+        when is_record(State, manager_state)->
+    {reply, Opt, State};
+handle_call({new_task, master, Opt}, _From, State)
         when is_record(State, manager_state)->
     TaskSets=State#manager_state.task_sets,
     Task=proplists:get_value(task, Opt),
@@ -124,7 +133,7 @@ handle_call({new_task, Opt}, _From, State)
             end
     end;
 handle_call(_Msg, _From, State)->
-    {reply, reply, State}.
+    {reply, {error, "error message"}, State}.
 
 handle_cast(map, State) when is_record(State, worker_state)->
     #worker_state{
