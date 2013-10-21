@@ -137,11 +137,11 @@ handle_cast(map, State) when is_record(State, worker_state)->
         case apply(Mod, map, [Workspace]) of
             ok->
                 gen_server:cast(Master, {reduce, {ok, Name}});
-            Reason={error, _}->
-                gen_server:cast(Master, {reduce, Name, Reason})
+            {error, Reason}->
+                gen_server:cast(Master, {reduce, {error, Name, Reason}})
         end
     catch
-        T:R->gen_server:cast(Master, {reduce, Name, {error, {T, R}}})
+        T:R->gen_server:cast(Master, {reduce, {error, Name, {T, R}}})
     end,
     {noreply, State};
 
