@@ -5,6 +5,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
         code_change/3, terminate/2]).
 
+-define(PING_INTERVAL, 1500).
+
 -define(id(Name, Type), list_to_atom(lists:concat([Name, ":", Type]))).
 -define(sub_workspace(Workspace, X), filename:join(Workspace, X)).
 -define(broadcast_map_msg(Task, ThreadNum),
@@ -14,6 +16,8 @@
 
 -record(manager_state, {
         task_sets::tuple(),
+        role::master|sub,
+        ping_tref::term(),
         config_nodes::list(atom())
     }).
 -record(worker_state, {
@@ -59,8 +63,13 @@ start_link(RegName, Opt)->
 
 init([manager, Nodes])->
     process_flag(trap_exit, true),
+    {ok, PingTref}=timer:apply_interval(?PING_INTERVAL, lists, foreach, [
+            fun(Node)->
+                    net_adm:ping(Node)
+            end, Nodes]),
     {ok, #manager_state{
             task_sets=sets:new(),
+            ping_tref=PingTref,
             config_nodes=Nodes
         }};
 init([master, Mod, Workspace, ThreadNum, Task])->
@@ -81,10 +90,7 @@ init([worker, Mod, Workspace, Master, RegName])->
             master=Master
         }}.
 
-handle_call({new_task, sub, Opt}, _From, State)
-        when is_record(State, manager_state)->
-    {reply, Opt, State};
-handle_call({new_task, master, Opt}, _From, State)
+handle_call({new_task, Opt}, _From, State)
         when is_record(State, manager_state)->
     TaskSets=State#manager_state.task_sets,
     Task=proplists:get_value(task, Opt),
@@ -229,12 +235,12 @@ handle_cast({reduce, {error, Name, Reason}}, State)
         when is_record(State, master_state)->
     Task=State#master_state.task,
     error_logger:info_msg("Task:~p, Worker:~p map failed", [Task, Name]),
-    gen_server:cast(stolas_manager, Task, #failure_msg{
+    gen_server:cast(stolas_manager, {close_task, Task, #failure_msg{
             task=Task,
             role=worker,
             reason=Reason,
             msg="Task map failed"
-        }),
+        }}),
     {noreply, State};
 
 handle_cast({close_task, Task, Res}, State)
@@ -275,5 +281,8 @@ handle_info(_Msg, State)->
 code_change(_Vsn, State, _Extra)->
     {ok, State}.
 
+terminate(_Reason, State) when is_record(State, manager_state)->
+    timer:cancel(State#manager_state.ping_tref),
+    ok;
 terminate(_Reason, _State)->
     ok.
