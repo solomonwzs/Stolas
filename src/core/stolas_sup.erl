@@ -14,6 +14,8 @@
 %% supervisor callbacks
 -export([init/1]).
 
+-define(DEFAULT_CONFIG_FILE, "./stolas.config").
+
 %% @spec start_link() -> ServerRet
 %% @doc API for starting the supervisor.
 start_link() ->
@@ -42,9 +44,13 @@ upgrade() ->
 %% @doc supervisor callback.
 init([]) ->
     Web = web_specs(stolas_web, 8080),
+    {ok, Conf}=file:consult(?DEFAULT_CONFIG_FILE),
     Manager={
         stolas_server,
-        {stolas_server, start_link, [stolas_manager, [{role, manager}]]},
+        {stolas_server, start_link, [stolas_manager, [
+                    {role, manager},
+                    {config, Conf}
+                ]]},
         permanent, 5000, worker, [stolas_server]},
     Processes = [Web, Manager],
     Strategy = {one_for_one, 10, 10},

@@ -18,7 +18,7 @@
         task_sets::tuple(),
         role::master|sub,
         ping_tref::term(),
-        config_nodes::list(atom())
+        config::list(tuple())
     }).
 -record(worker_state, {
         mod::atom(),
@@ -50,8 +50,8 @@ start_link(RegName, Opt)->
             gen_server:start_link({local, RegName}, ?MODULE,
                 [master, Mod, Workspace, ThreadNum, Task], []);
         manager->
-            Nodes=proplists:get_value(nodes, Opt, [node()]),
-            gen_server:start_link({local, RegName}, ?MODULE, [manager, Nodes],
+            Conf=proplists:get_value(config, Opt, []),
+            gen_server:start_link({local, RegName}, ?MODULE, [manager, Conf],
                 []);
         worker->
             Workspace=proplists:get_value(workspace, Opt),
@@ -61,16 +61,18 @@ start_link(RegName, Opt)->
                 [worker, Mod, Workspace, Master, RegName], [])
     end.
 
-init([manager, Nodes])->
+init([manager, Conf])->
     process_flag(trap_exit, true),
-    {ok, PingTref}=timer:apply_interval(?PING_INTERVAL, lists, foreach, [
-            fun(Node)->
-                    net_adm:ping(Node)
-            end, Nodes]),
+    Nodes=proplists:get_value(nodes, Conf, [node()]),
+    {ok, PingTref}=timer:apply_interval(?PING_INTERVAL, erlang, spawn, [
+            lists, foreach, [
+                fun(Node)->
+                        net_adm:ping(Node)
+                end, Nodes]]),
     {ok, #manager_state{
             task_sets=sets:new(),
             ping_tref=PingTref,
-            config_nodes=Nodes
+            config=Conf
         }};
 init([master, Mod, Workspace, ThreadNum, Task])->
     process_flag(trap_exit, true),
@@ -90,6 +92,9 @@ init([worker, Mod, Workspace, Master, RegName])->
             master=Master
         }}.
 
+handle_call(get_config, _From, State)
+        when is_record(State, manager_state)->
+    {reply, State#manager_state.config, State};
 handle_call({new_task, Opt}, _From, State)
         when is_record(State, manager_state)->
     TaskSets=State#manager_state.task_sets,
