@@ -94,7 +94,7 @@ init([worker, Mod, Workspace, Master, RegName])->
 
 handle_call(get_config, _From, State)
         when is_record(State, manager_state)->
-    {reply, State#manager_state.config, State};
+    {reply, {ok, State#manager_state.config}, State};
 handle_call({new_task, Opt}, _From, State)
         when is_record(State, manager_state)->
     TaskSets=State#manager_state.task_sets,
