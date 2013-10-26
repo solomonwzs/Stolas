@@ -13,6 +13,12 @@
         lists:foreach(fun(X)->
                               gen_server:cast(?id(Task, X), map)
                       end, lists:seq(1, ThreadNum))).
+-define(ping_tref(Nodes),
+        timer:apply_interval(
+          ?PING_INTERVAL, erlang, spawn,
+          [lists, foreach, [fun(Node)->
+                                    net_adm:ping(Node)
+                            end, Nodes]])).
 
 -record(manager_state, {
           task_sets::tuple(),
@@ -65,11 +71,7 @@ start_link(RegName, Opt)->
 init([manager, Conf])->
     process_flag(trap_exit, true),
     Nodes=proplists:get_value(nodes, Conf, [node()]),
-    {ok, PingTref}=timer:apply_interval(
-                     ?PING_INTERVAL, erlang, spawn,
-                     [lists, foreach, [fun(Node)->
-                                               net_adm:ping(Node)
-                                       end, Nodes]]),
+    {ok, PingTref}=?ping_tref(Nodes),
     {ok, #manager_state{
             task_sets=sets:new(),
             ping_tref=PingTref,
@@ -98,10 +100,20 @@ handle_call(get_config, _From, State)
     {reply, {ok, State#manager_state.config}, State};
 handle_call(reload_config, _From, State)
   when is_record(State, manager_state)->
-    case sets:size(State#manager_state.task_sets) of
+    #manager_state{
+       task_sets=TaskSets,
+       ping_tref=PingTref
+      }=State,
+    case sets:size(TaskSets) of
         0->
+            timer:cancel(PingTref),
+            NewConf=stolas_utils:get_value(default),
+            Nodes=proplists:get_value(nodes, NewConf, [node()]),
+            {ok, NewPingTref}=?ping_tref(Nodes),
             NewState=State#manager_state{
-                       config=stolas_utils:get_value(default)},
+                       config=NewConf,
+                       ping_tref=NewPingTref
+                      },
             {reply, {ok, NewState}, NewState};
         _->{reply, {error, "task list is not empty"}, State}
     end;
