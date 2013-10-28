@@ -28,7 +28,7 @@ copy_file(Local, Node, Remote, Type)->
         {ok, LocalDev}->
             try
                 {ok, Conf}=stolas_utils:get_config(),
-                SSHConf=proplists:get_value(ssh, Conf),
+                SSHConf=proplists:get_value(ssh_nodes_args, Conf),
                 {User, Host, Port}=proplists:get_value(Node, SSHConf),
                 Conn=
                 case ssh:connect(Host, Port,

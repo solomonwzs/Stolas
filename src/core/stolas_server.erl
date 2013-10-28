@@ -70,8 +70,7 @@ start_link(RegName, Opt)->
 
 init([manager, Conf])->
     process_flag(trap_exit, true),
-    Nodes=proplists:get_value(nodes, Conf, [node()]),
-    {ok, PingTref}=?ping_tref(Nodes),
+    {PingTref}=process_conf(Conf),
     {ok, #manager_state{
             task_sets=sets:new(),
             ping_tref=PingTref,
@@ -95,21 +94,18 @@ init([worker, Mod, Workspace, Master, RegName])->
             master=Master
            }}.
 
-handle_call(get_config, _From, State)
-  when is_record(State, manager_state)->
-    {reply, {ok, State#manager_state.config}, State};
-handle_call(reload_config, _From, State)
-  when is_record(State, manager_state)->
-    #manager_state{
-       task_sets=TaskSets,
-       ping_tref=PingTref
-      }=State,
+handle_call(get_config, _From, State=#manager_state{
+                                        config=Conf
+                                       })->
+    {reply, {ok, Conf}, State};
+handle_call(reload_config, _From, State=#manager_state{
+                                           task_sets=TaskSets
+                                          })->
     case sets:size(TaskSets) of
         0->
-            timer:cancel(PingTref),
             NewConf=stolas_utils:get_value(default),
-            Nodes=proplists:get_value(nodes, NewConf, [node()]),
-            {ok, NewPingTref}=?ping_tref(Nodes),
+            cancel_conf(State),
+            {NewPingTref}=process_conf(NewConf),
             NewState=State#manager_state{
                        config=NewConf,
                        ping_tref=NewPingTref
@@ -117,9 +113,9 @@ handle_call(reload_config, _From, State)
             {reply, {ok, NewState}, NewState};
         _->{reply, {error, "task list is not empty"}, State}
     end;
-handle_call({new_task, Opt}, _From, State)
-  when is_record(State, manager_state)->
-    TaskSets=State#manager_state.task_sets,
+handle_call({new_task, Opt}, _From, State=#manager_state{
+                                             task_sets=TaskSets
+                                            })->
     Task=proplists:get_value(task, Opt),
     case sets:is_element(Task, TaskSets) of
         true->
@@ -170,13 +166,12 @@ handle_call({new_task, Opt}, _From, State)
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
-handle_cast(map, State) when is_record(State, worker_state)->
-    #worker_state{
-       workspace=Workspace,
-       mod=Mod,
-       master=Master,
-       name=Name
-      }=State,
+handle_cast(map, State=#worker_state{
+                          workspace=Workspace,
+                          mod=Mod,
+                          master=Master,
+                          name=Name
+                         })->
     try
         case apply(Mod, map, [Workspace]) of
             ok->
@@ -189,13 +184,12 @@ handle_cast(map, State) when is_record(State, worker_state)->
     end,
     {noreply, State};
 
-handle_cast({init, InitArgs}, State) when is_record(State, master_state)->
-    #master_state{
-       task=Task,
-       thread_num=ThreadNum,
-       workspace=Workspace,
-       mod=Mod
-      }=State,
+handle_cast({init, InitArgs}, State=#master_state{
+                                       task=Task,
+                                       thread_num=ThreadNum,
+                                       workspace=Workspace,
+                                       mod=Mod
+                                      })->
     try
         case apply(Mod, init, [Workspace, InitArgs]) of
             ok->
@@ -226,14 +220,13 @@ handle_cast({init, InitArgs}, State) when is_record(State, master_state)->
                                 }})
     end,
     {noreply, State};
-handle_cast({reduce, {ok, Name}}, State) when is_record(State, master_state)->
-    #master_state{
-       finish_tasks=FinishTasks,
-       mod=Mod,
-       workspace=Workspace,
-       thread_num=ThreadNum,
-       task=Task
-      }=State,
+handle_cast({reduce, {ok, Name}}, State=#master_state{
+                                           finish_tasks=FinishTasks,
+                                           mod=Mod,
+                                           workspace=Workspace,
+                                           thread_num=ThreadNum,
+                                           task=Task
+                                          })->
     error_logger:info_msg("Task:~p, Worker:~p map finish", [Task, Name]),
     if
         FinishTasks+1=:=ThreadNum->
@@ -265,9 +258,9 @@ handle_cast({reduce, {ok, Name}}, State) when is_record(State, master_state)->
         true->ok
     end,
     {noreply, State#master_state{finish_tasks=FinishTasks+1}};
-handle_cast({reduce, {error, Name, Reason}}, State)
-  when is_record(State, master_state)->
-    Task=State#master_state.task,
+handle_cast({reduce, {error, Name, Reason}}, State=#master_state{
+                                                      task=Task
+                                                     })->
     error_logger:info_msg("Task:~p, Worker:~p map failed", [Task, Name]),
     gen_server:cast(stolas_manager, {close_task, Task,
                                      #failure_msg{
@@ -278,9 +271,9 @@ handle_cast({reduce, {error, Name, Reason}}, State)
                                        }}),
     {noreply, State};
 
-handle_cast({close_task, Task, Res}, State)
-  when is_record(State, manager_state)->
-    TaskSets=State#manager_state.task_sets,
+handle_cast({close_task, Task, Res}, State=#manager_state{
+                                              task_sets=TaskSets
+                                             })->
     case sets:is_element(Task, TaskSets) of
         true->
             supervisor:terminate_child(stolas_sup, Task),
@@ -316,8 +309,25 @@ handle_info(_Msg, State)->
 code_change(_Vsn, State, _Extra)->
     {ok, State}.
 
-terminate(_Reason, State) when is_record(State, manager_state)->
-    timer:cancel(State#manager_state.ping_tref),
+terminate(_Reason, _State=#manager_state{
+                            ping_tref=PingTref
+                           })->
+    timer:cancel(PingTref),
     ok;
 terminate(_Reason, _State)->
     ok.
+
+process_conf(Conf)->
+    Nodes=proplists:get_value(nodes, Conf, [node()]),
+    {ok, PingTref}=?ping_tref(Nodes),
+
+    case proplists:get_value(ssh_files_transport, Conf, false) of
+        true->ssh:start();
+        false->ssh:stop()
+    end,
+    {PingTref}.
+
+cancel_conf(#manager_state{
+               ping_tref=PingTref
+              })->
+    timer:cancel_conf(PingTref).
