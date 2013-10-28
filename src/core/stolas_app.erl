@@ -13,7 +13,6 @@
 %% @spec start(_Type, _StartArgs) -> ServerRet
 %% @doc application start callback for stolas.
 start(_Type, _StartArgs) ->
-    error_logger:add_report_handler(stolas_log_handler, ["./stolas_log"]),
     stolas_deps:ensure(),
     stolas_sup:start_link().
 

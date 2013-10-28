@@ -3,8 +3,6 @@
 -export([get_config/0, get_config/1]).
 -export([readable_datetime/1]).
 
--define(DEFAULT_CONFIG_FILE, "./stolas.config").
-
 readable_datetime(Date)->
     {{Y, M, D}, {H, MM, S}}=Date,
     lists:flatten(io_lib:format(
@@ -16,9 +14,10 @@ get_config()->
         gen_server:call(stolas_manager, get_config, 500)
     catch
         _:_->
-            get_config(define)
+            get_config(default)
     end.
 get_config(default)->
-    get_config(?DEFAULT_CONFIG_FILE);
+    {ok, ConfFile}=application:get_env(stolas, config_file),
+    get_config(ConfFile);
 get_config(ConfFile)->
     file:consult(ConfFile).

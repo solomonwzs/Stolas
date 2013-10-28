@@ -3,7 +3,9 @@
  [{description, "stolas"},
   {vsn, "0.1"},
   {modules, []},
-  {registered, []},
+  {registered, [stolas_sup, stolas_manager, stolas_web]},
   {mod, {'stolas_app', []}},
-  {env, []},
+  {env, [
+         {config_file, "./stolas.config"}
+        ]},
   {applications, [kernel, stdlib, crypto]}]}.

@@ -1,9 +1,12 @@
 -module(stolas_task).
 -export([start/1, stop/1]).
 
--callback init(WorkSpace::string(), Args::term())->ok|{error, Reason::term()}.
--callback map(WorkSpace::string())->ok|{error, Reason::term()}.
--callback reduce(WorkSpace::string())->ok|{error, Reason::term()}.
+-callback init(WorkSpace::string(), Args::term())->
+    ok|{error, Reason::term()}.
+-callback map(WorkSpace::string())->
+    {ok, Result::term()}|{error, Reason::term()}.
+-callback reduce(WorkSpace::string(), WorkerResults::list())->
+    ok|{error, Reason::term()}.
 
 start(Opt)->
     gen_server:call(stolas_manager, {new_task, Opt}).

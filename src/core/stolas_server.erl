@@ -15,14 +15,18 @@
                       end, lists:seq(1, ThreadNum))).
 -define(ping_tref(Nodes),
         timer:apply_interval(
-          ?PING_INTERVAL, erlang, spawn,
-          [lists, foreach, [fun(Node)->
-                                    net_adm:ping(Node)
-                            end, Nodes]])).
+          ?PING_INTERVAL,
+          lists, foreach, [fun(Node)->
+                                   net_adm:ping(Node)
+                           end, Nodes])).
+-define(get_valid_nodes(ConfNodes),
+        sets:to_list(sets:intersection(
+                       sets:from_list(ConfNodes),
+                       sets:from_list(nodes())
+                      ))).
 
 -record(manager_state, {
           task_sets::tuple(),
-          role::master|sub,
           ping_tref::term(),
           config::list(tuple())
          }).
@@ -37,6 +41,7 @@
           mod::atom(),
           workspace::string(),
           thread_num::integer(),
+          worker_results::tuple(),
           finish_tasks::integer()
          }).
 -record(failure_msg, {
@@ -53,8 +58,10 @@ start_link(RegName, Opt)->
             Mod=proplists:get_value(mod, Opt),
             ThreadNum=proplists:get_value(thread_num, Opt),
             Task=proplists:get_value(task, Opt),
+            ValidNodes=proplists:get_value(valid_nodes, Opt),
             gen_server:start_link({local, RegName}, ?MODULE,
-                                  [master, Mod, Workspace, ThreadNum, Task],
+                                  [master, Mod, Workspace, ThreadNum, Task,
+                                   ValidNodes],
                                   []);
         manager->
             Conf=proplists:get_value(config, Opt, []),
@@ -76,12 +83,14 @@ init([manager, Conf])->
             ping_tref=PingTref,
             config=Conf
            }};
-init([master, Mod, Workspace, ThreadNum, Task])->
+init([master, Mod, Workspace, ThreadNum, Task, ValidNodes])->
     process_flag(trap_exit, true),
     {ok, #master_state{
             mod=Mod,
             workspace=Workspace,
             thread_num=ThreadNum,
+            worker_results=dict:from_list([{Node, []}
+                                           ||Node<-[node()|ValidNodes]]),
             task=Task,
             finish_tasks=0
            }};
@@ -114,7 +123,8 @@ handle_call(reload_config, _From, State=#manager_state{
         _->{reply, {error, "task list is not empty"}, State}
     end;
 handle_call({new_task, Opt}, _From, State=#manager_state{
-                                             task_sets=TaskSets
+                                             task_sets=TaskSets,
+                                             config=Conf
                                             })->
     Task=proplists:get_value(task, Opt),
     case sets:is_element(Task, TaskSets) of
@@ -125,15 +135,14 @@ handle_call({new_task, Opt}, _From, State=#manager_state{
             Workspace=proplists:get_value(workspace, Opt),
             ThreadNum=proplists:get_value(thread_num, Opt),
             MasterId=?id(Task, master),
+            ConfNodes=proplists:get_value(Conf, nodes, []),
             MasterSpec={
               MasterId,
               {stolas_server, start_link,
                [MasterId, [{role, master}, {thread_num, ThreadNum},
-                           {mod, Mod}, {workspace, Workspace}, {task, Task}]]},
-              permanent,
-              5000,
-              worker,
-              [stolas_server]
+                           {mod, Mod}, {workspace, Workspace}, {task, Task},
+                           {valid_nodes, ?get_valid_nodes(ConfNodes)}]]},
+              permanent, 5000, worker, [stolas_server]
              },
             ChildSpecs=[{
               ?id(Task, X),
@@ -143,10 +152,7 @@ handle_call({new_task, Opt}, _From, State=#manager_state{
                                {workspace, 
                                 ?sub_workspace(Workspace,
                                                integer_to_list(X))}]]},
-              permanent, 
-              5000,
-              worker,
-              [stolas_server]
+              permanent, 5000, worker, [stolas_server]
              }||X<-lists:seq(1, ThreadNum)],
             Res=supervisor:start_child(
                   stolas_sup,
@@ -174,10 +180,12 @@ handle_cast(map, State=#worker_state{
                          })->
     try
         case apply(Mod, map, [Workspace]) of
-            ok->
-                gen_server:cast(Master, {reduce, {ok, Name}});
+            {ok, Result}->
+                gen_server:cast(Master, {reduce,
+                                         {ok, {node(), Name}, Result}});
             {error, Reason}->
-                gen_server:cast(Master, {reduce, {error, Name, Reason}})
+                gen_server:cast(Master, {reduce,
+                                         {error, {node(), Name}, Reason}})
         end
     catch
         T:R->gen_server:cast(Master, {reduce, {error, Name, {T, R}}})
@@ -220,18 +228,21 @@ handle_cast({init, InitArgs}, State=#master_state{
                                 }})
     end,
     {noreply, State};
-handle_cast({reduce, {ok, Name}}, State=#master_state{
-                                           finish_tasks=FinishTasks,
-                                           mod=Mod,
-                                           workspace=Workspace,
-                                           thread_num=ThreadNum,
-                                           task=Task
-                                          })->
+handle_cast({reduce, {ok, Name={Node, _WorkerName}, Result}},
+            State=#master_state{
+                     finish_tasks=FinishTasks,
+                     mod=Mod,
+                     workspace=Workspace,
+                     thread_num=ThreadNum,
+                     task=Task,
+                     worker_results=WorkerResults
+                    })->
     error_logger:info_msg("Task:~p, Worker:~p map finish", [Task, Name]),
+    NewWorkerResults=dict:append(Node, Result, WorkerResults),
     if
         FinishTasks+1=:=ThreadNum->
             try
-                case apply(Mod, reduce, [Workspace]) of
+                case apply(Mod, reduce, [Workspace, NewWorkerResults]) of
                     ok->
                         gen_server:cast(stolas_manager,
                                         {close_task, Task, normal});
@@ -257,7 +268,10 @@ handle_cast({reduce, {ok, Name}}, State=#master_state{
             end;
         true->ok
     end,
-    {noreply, State#master_state{finish_tasks=FinishTasks+1}};
+    {noreply, State#master_state{
+                finish_tasks=FinishTasks+1,
+                worker_results=NewWorkerResults
+               }};
 handle_cast({reduce, {error, Name, Reason}}, State=#master_state{
                                                       task=Task
                                                      })->
@@ -323,11 +337,18 @@ process_conf(Conf)->
 
     case proplists:get_value(ssh_files_transport, Conf, false) of
         true->ssh:start();
-        false->ssh:stop()
+        _->ssh:stop()
+    end,
+    case proplists:get_value(readable_file_log, Conf) of
+        LogPath when is_list(LogPath)->
+            error_logger:add_report_handler(stolas_log_handler, [LogPath]);
+        _->ok
     end,
     {PingTref}.
 
 cancel_conf(#manager_state{
                ping_tref=PingTref
               })->
-    timer:cancel_conf(PingTref).
+    timer:cancel_conf(PingTref),
+    error_logger:delete_report_handler(stolas_log_handler),
+    ok.
