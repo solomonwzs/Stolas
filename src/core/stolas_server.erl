@@ -24,10 +24,38 @@
                        sets:from_list(ConfNodes),
                        sets:from_list(nodes())
                       ))).
+-define(master_spec(MasterId, ThreadNum, Mod, Workspace, Task, ConfNodes), {
+          MasterId,
+          {stolas_server, start_link,
+           [MasterId, [{role, master}, {thread_num, ThreadNum},
+                       {mod, Mod}, {workspace, Workspace}, {task, Task},
+                       {valid_nodes, ?get_valid_nodes(ConfNodes)}]]},
+          permanent, 5000, worker, [stolas_server]
+         }).
+-define(worker_specs(MasterId, ThreadNum, Mod, Workspace, Task),
+        lists:map(fun(X)->
+                          {?id(Task, X),
+                           {stolas_server, start_link,
+                            [?id(Task, X), [{role, worker}, {mod, Mod},
+                                            {master, MasterId},
+                                            {workspace, 
+                                             ?sub_workspace(
+                                                Workspace,
+                                                integer_to_list(X))}]]},
+                           permanent, 5000, worker, [stolas_server]
+                          }
+                  end, lists:seq(1, ThreadNum))).
+-define(start_task(Task, ChildSpecs),
+        supervisor:start_child(
+          stolas_sup,
+          {Task,
+           {stolas_simple_sup, start_link, [Task, ChildSpecs]},
+           permanent, infinity, supervisor, [stolas_simple_sup]})).
 
 -record(manager_state, {
           task_sets::tuple(),
           ping_tref::term(),
+          is_master::true|false,
           config::list(tuple())
          }).
 -record(worker_state, {
@@ -77,10 +105,11 @@ start_link(RegName, Opt)->
 
 init([manager, Conf])->
     process_flag(trap_exit, true),
-    {PingTref}=process_conf(Conf),
+    {PingTref, IsMaster}=process_conf(Conf),
     {ok, #manager_state{
             task_sets=sets:new(),
             ping_tref=PingTref,
+            is_master=IsMaster,
             config=Conf
            }};
 init([master, Mod, Workspace, ThreadNum, Task, ValidNodes])->
@@ -122,10 +151,12 @@ handle_call(reload_config, _From, State=#manager_state{
             {reply, {ok, NewState}, NewState};
         _->{reply, {error, "task list is not empty"}, State}
     end;
-handle_call({new_task, Opt}, _From, State=#manager_state{
-                                             task_sets=TaskSets,
-                                             config=Conf
-                                            })->
+handle_call({new_task, Opt}, _From,
+            State=#manager_state{
+                     task_sets=TaskSets,
+                     is_master=IsMaster,
+                     config=Conf
+                    }) when IsMaster=:=true->
     Task=proplists:get_value(task, Opt),
     case sets:is_element(Task, TaskSets) of
         true->
@@ -136,30 +167,10 @@ handle_call({new_task, Opt}, _From, State=#manager_state{
             ThreadNum=proplists:get_value(thread_num, Opt),
             MasterId=?id(Task, master),
             ConfNodes=proplists:get_value(Conf, nodes, []),
-            MasterSpec={
-              MasterId,
-              {stolas_server, start_link,
-               [MasterId, [{role, master}, {thread_num, ThreadNum},
-                           {mod, Mod}, {workspace, Workspace}, {task, Task},
-                           {valid_nodes, ?get_valid_nodes(ConfNodes)}]]},
-              permanent, 5000, worker, [stolas_server]
-             },
-            ChildSpecs=[{
-              ?id(Task, X),
-              {stolas_server, start_link,
-               [?id(Task, X), [{role, worker}, {mod, Mod},
-                               {master, MasterId},
-                               {workspace, 
-                                ?sub_workspace(Workspace,
-                                               integer_to_list(X))}]]},
-              permanent, 5000, worker, [stolas_server]
-             }||X<-lists:seq(1, ThreadNum)],
-            Res=supervisor:start_child(
-                  stolas_sup,
-                  {Task,
-                   {stolas_simple_sup, start_link, [Task,
-                                                    [MasterSpec|ChildSpecs]]},
-                   permanent, infinity, supervisor, [stolas_simple_sup]}),
+            MasterSpec=?master_spec(MasterId, ThreadNum, Mod, Workspace, Task,
+                                    ConfNodes),
+            WorkerSpecs=?worker_specs(MasterId, ThreadNum, Mod, Workspace, Task),
+            Res=?start_task(Task, [MasterSpec|WorkerSpecs]),
             case Res of
                 {ok, _}->
                     NewTaskSets=sets:add_element(Task, TaskSets),
@@ -324,8 +335,8 @@ code_change(_Vsn, State, _Extra)->
     {ok, State}.
 
 terminate(_Reason, _State=#manager_state{
-                            ping_tref=PingTref
-                           })->
+                             ping_tref=PingTref
+                            })->
     timer:cancel(PingTref),
     ok;
 terminate(_Reason, _State)->
@@ -344,7 +355,9 @@ process_conf(Conf)->
             error_logger:add_report_handler(stolas_log_handler, [LogPath]);
         _->ok
     end,
-    {PingTref}.
+    IsMaster=proplists:get_value(master, Conf)=:=node(),
+                 
+    {PingTref, IsMaster}.
 
 cancel_conf(#manager_state{
                ping_tref=PingTref
