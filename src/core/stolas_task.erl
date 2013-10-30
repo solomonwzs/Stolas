@@ -3,10 +3,10 @@
 
 -callback init(WorkSpace::string(), Args::term())->
     ok|{error, Reason::term()}.
--callback map(WorkSpace::string())->
+-callback alloc(Node::atom())->{ok, TaskArgs::term()}|none.
+-callback map(WorkSpace::string(), TaskArgs::term())->
     {ok, Result::term()}|{error, Reason::term()}.
--callback reduce(WorkSpace::string(), WorkerResults::list())->
-    ok|{error, Reason::term()}.
+-callback reduce(WorkSpace::string())->ok|{error, Reason::term()}.
 
 start(Opt)->
     gen_server:call(stolas_manager, {new_task, Opt}).
