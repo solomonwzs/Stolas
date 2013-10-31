@@ -25,6 +25,8 @@
           MasterId,
           {stolas_master, start_link,
            [MasterId, [{thread_num, ThreadNum},
+                       {work_result_file, filename:join(
+                                            Workspace, "log/work_result")},
                        {mod, Mod}, {task, Task},
                        {workspace, ?sub_workspace(Workspace, "master")},
                        {valid_nodes, ?get_valid_nodes(ConfNodes)}]]},
@@ -89,12 +91,12 @@ handle_call(reload_config, _From, State=#manager_state{
             {reply, {ok, NewState}, NewState};
         _->{reply, {error, "task list is not empty"}, State}
     end;
-handle_call({new_task, Opt}, _From,
+handle_call(Msg={new_task, Opt}, _From,
             State=#manager_state{
                      task_sets=TaskSets,
-                     is_master=IsMaster,
+                     is_master=_IsMaster,
                      config=Conf
-                    }) when IsMaster=:=true->
+                    })->
     Task=proplists:get_value(task, Opt),
     case sets:is_element(Task, TaskSets) of
         true->
@@ -102,20 +104,48 @@ handle_call({new_task, Opt}, _From,
         false->
             Mod=proplists:get_value(mod, Opt),
             Workspace=proplists:get_value(workspace, Opt),
-            ThreadNum=proplists:get_value(thread_num, Opt),
             MasterId=?task_id(Task, master),
+
+            MasterNode=proplists:get_value(Conf, master),
+            LocalNode=node(),
             ConfNodes=proplists:get_value(Conf, nodes, []),
-            MasterSpec=?master_spec(MasterId, ThreadNum, Mod, Workspace, Task,
-                                    ConfNodes),
-            WorkerSpecs=?worker_specs(MasterId, ThreadNum, Mod, Workspace, Task),
-            Res=?start_task(Task, [MasterSpec|WorkerSpecs]),
-            case Res of
-                {ok, _}->
+            ValidNodes=?get_valid_nodes(ConfNodes),
+            if
+                MasterNode=:=LocalNode->
+                    TaskAlloc1=proplists:get_value(Opt, task_alloc),
+                    TaskAlloc2=
+                    lists:foldl(
+                      fun(N={X, _}, Acc)->
+                              case lists:member(X, ValidNodes)
+                                   andalso MasterNode=/=X of
+                                  true->
+                                      case gen_server:call(
+                                             {stolas_manager, X},
+                                             Msg) of
+                                          {ok, _}->[N|Acc];
+                                          _->Acc
+                                      end;
+                                  false->Acc
+                              end
+                      end, [], TaskAlloc1),
+                    TaskAlloc3=case proplists:lookup(LocalNode,
+                                                        TaskAlloc1) of
+                                   none->[{LocalNode, 0}|TaskAlloc2];
+                                   T->[T|TaskAlloc2]
+                               end,
+                    ThreadNum=lists:sum([X||{_, X}<-TaskAlloc3]),
+                    MasterSpec=?master_spec(MasterId, ThreadNum, Mod, Workspace,
+                                            Task, ConfNodes),
+                    WorkerSpecs=?worker_specs(MasterId, ThreadNum, Mod,
+                                              Workspace, Task),
+                    Res=?start_task(Task, [MasterSpec|WorkerSpecs]),
                     NewTaskSets=sets:add_element(Task, TaskSets),
                     InitArgs=proplists:get_value(init_args, Opt),
                     gen_server:cast(MasterId, {init, InitArgs}),
-                    {reply, Res, State#manager_state{task_sets=NewTaskSets}};
-                _->{reply, {error, Res}, State}
+                    {reply, Res, State#manager_state{
+                                   task_sets=NewTaskSets}};
+                true->
+                    ok
             end
     end;
 handle_call(_Msg, _From, State)->

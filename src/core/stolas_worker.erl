@@ -42,14 +42,15 @@ handle_cast(get_task, State=#worker_state{
                                master=Master,
                                name=WorkerName
                               })->
-    Name={node(), WorkerName},
+    Name={WorkerName, node()},
     case gen_server:call(Master, alloc) of
-        none->gen_server:cast(Master, {reduce, {ok, WorkerName}});
+        none->gen_server:cast(Master, {reduce, {ok, Name}});
         {ok, TaskArgs}->
             try
                 case apply(Mod, map, [Workspace, TaskArgs]) of
                     {ok, Result}->
-                        gen_server:cast(Master, {map_ok, Name, Result}),
+                        gen_server:cast(Master, {map_ok, Name, TaskArgs,
+                                                 Result}),
                         gen_server:cast(self(), get_task);
                     {error, Reason}->
                         gen_server:cast(Master, {map_error, Name, Reason})

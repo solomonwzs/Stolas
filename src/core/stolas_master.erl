@@ -17,7 +17,7 @@
           mod::atom(),
           workspace::string(),
           thread_num::integer(),
-          worker_results::tuple(),
+          work_results::term(),
           finish_tasks::integer()
          }).
 
@@ -26,20 +26,25 @@ start_link(RegName, Opt)->
 
 init([Opt])->
     process_flag(trap_exit, true),
-    Workspace=proplists:get_value(workspace, Opt),
-    Mod=proplists:get_value(mod, Opt),
-    ThreadNum=proplists:get_value(thread_num, Opt),
     Task=proplists:get_value(task, Opt),
-    ValidNodes=proplists:get_value(valid_nodes, Opt),
-    {ok, #master_state{
-            mod=Mod,
-            workspace=Workspace,
-            thread_num=ThreadNum,
-            worker_results=dict:from_list([{Node, []}
-                                           ||Node<-[node()|ValidNodes]]),
-            task=Task,
-            finish_tasks=0
-           }}.
+    WorkResultFile=proplists:get_value(work_result, Opt),
+    case disk_log:open([{name, lists:concat([Task, ":worklog"])},
+                        {file, WorkResultFile}]) of
+        {error, Err}->
+            {stop, {"create work log failed", Err}};
+        {ok, Log}->
+            Workspace=proplists:get_value(workspace, Opt),
+            Mod=proplists:get_value(mod, Opt),
+            ThreadNum=proplists:get_value(thread_num, Opt),
+            {ok, #master_state{
+                    mod=Mod,
+                    workspace=Workspace,
+                    thread_num=ThreadNum,
+                    work_results=Log,
+                    task=Task,
+                    finish_tasks=0
+                   }}
+    end.
 
 handle_call({alloc, WorkerName}, {Pid, _}, State=#master_state{
                                                     mod=Mod,
@@ -137,9 +142,16 @@ handle_cast({reduce, {ok, Name={_Node, _WorkerName}}},
         true->ok
     end,
     {noreply, State#master_state{finish_tasks=FinishTasks+1}};
+handle_cast({map_ok, Name, TaskArgs, Result}, State=#master_state{
+                                                       task=Task,
+                                                       work_results=WorkResult
+                                                      })->
+    error_logger:info_msg("Task:~p, Worker:~p map ok", [Task, Name]),
+    disk_log:blog(WorkResult, term_to_binary({Name, TaskArgs, Result})),
+    {noreply, State};
 handle_cast({map_error, Name, Reason}, State=#master_state{
-                                                      task=Task
-                                                     })->
+                                                task=Task
+                                               })->
     error_logger:info_msg("Task:~p, Worker:~p map failed", [Task, Name]),
     gen_server:cast(stolas_manager, {close_task, Task,
                                      #task_failure_msg{
@@ -158,5 +170,8 @@ handle_info(_Msg, State)->
 code_change(_Vsn, State, _Extra)->
     {ok, State}.
 
-terminate(_Reason, _State)->
+terminate(_Reason, #master_state{
+                      work_results=WorkResult
+                     })->
+    disk_log:close(WorkResult),
     ok.
