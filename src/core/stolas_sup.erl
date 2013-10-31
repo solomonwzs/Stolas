@@ -44,11 +44,8 @@ init([]) ->
     Web = web_specs(stolas_web, 8080),
     {ok, Conf}=stolas_utils:get_config(default),
     Manager={
-      stolas_server,
-      {stolas_server, start_link, [stolas_manager, [
-                                                    {role, manager},
-                                                    {config, Conf}
-                                                   ]]},
+      stolas_manager,
+      {stolas_manager, start_link, [stolas_manager, Conf]},
       permanent, 5000, worker, [stolas_server]},
     Processes = [Web, Manager],
     Strategy = {one_for_one, 10, 10},
