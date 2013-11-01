@@ -14,8 +14,10 @@
 
 -record(master_state, {
           task::atom(),
+          leader::atom(),
           mod::atom(),
           workspace::string(),
+          sub_num::integer()|null,
           thread_num::integer(),
           work_results::term(),
           finish_tasks::integer()

@@ -21,17 +21,21 @@
                        sets:from_list(ConfNodes),
                        sets:from_list(nodes())
                       ))).
--define(master_spec(MasterId, ThreadNum, Mod, Workspace, Task, ConfNodes), {
-          MasterId,
-          {stolas_master, start_link,
-           [MasterId, [{thread_num, ThreadNum},
-                       {work_result_file, filename:join(
-                                            Workspace, "log/work_result")},
-                       {mod, Mod}, {task, Task},
-                       {workspace, ?sub_workspace(Workspace, "master")},
-                       {valid_nodes, ?get_valid_nodes(ConfNodes)}]]},
-          permanent, 5000, worker, [stolas_master]
-         }).
+-define(master_spec(Leader, ThreadNum, Mod, Workspace, Task),
+        {
+         element(1, Leader),
+         {stolas_master, start_link,
+          [element(1, Leader), [{thread_num, ThreadNum},
+                                {leader, Leader},
+                                {work_result_file,
+                                 filename:join(
+                                   Workspace, "log/work_result")},
+                                {mod, Mod}, 
+                                {task, Task},
+                                {workspace,
+                                 ?sub_workspace(Workspace, "master")}]]},
+         permanent, 5000, worker, [stolas_master]
+        }).
 -define(worker_specs(MasterId, ThreadNum, Mod, Workspace, Task),
         lists:map(fun(X)->
                           {?task_id(Task, X),
@@ -51,11 +55,14 @@
           {Task,
            {stolas_simple_sup, start_link, [Task, ChildSpecs]},
            permanent, infinity, supervisor, [stolas_simple_sup]})).
+-define(split_thread_alloc(LeaderNode, ThreadAlloc), 
+        {proplists:lookup(LeaderNode, ThreadAlloc),
+         proplists:delete(LeaderNode, ThreadAlloc)}).
 
 -record(manager_state, {
-          task_sets::tuple(),
+          task_dict::tuple(),
           ping_tref::term(),
-          is_master::true|false,
+          master_node::atom(),
           config::list(tuple())
          }).
 
@@ -64,22 +71,30 @@ start_link(RegName, Conf)->
 
 init([Conf])->
     process_flag(trap_exit, true),
-    {PingTref, IsMaster}=process_conf(Conf),
+    {PingTref, MasterNode}=process_conf(Conf),
     {ok, #manager_state{
-            task_sets=sets:new(),
+            task_dict=dict:new(),
             ping_tref=PingTref,
-            is_master=IsMaster,
+            master_node=MasterNode,
             config=Conf
            }}.
 
 handle_call(get_config, _From, State=#manager_state{
+                                        master_node=MasterNode,
                                         config=Conf
                                        })->
-    {reply, {ok, Conf}, State};
+    if
+        MasterNode=:=node()->
+            {reply, {ok, Conf}, State};
+        true->
+            Ret=gen_server:call({stolas_manager, MasterNode}, get_config),
+            {reply, Ret, State}
+    end;
 handle_call(reload_config, _From, State=#manager_state{
-                                           task_sets=TaskSets
-                                          })->
-    case sets:size(TaskSets) of
+                                           master_node=MasterNode,
+                                           task_dict=TaskDict
+                                          }) when MasterNode=:=node()->
+    case dict:size(TaskDict) of
         0->
             NewConf=stolas_utils:get_value(default),
             cancel_conf(State),
@@ -91,71 +106,56 @@ handle_call(reload_config, _From, State=#manager_state{
             {reply, {ok, NewState}, NewState};
         _->{reply, {error, "task list is not empty"}, State}
     end;
-handle_call(Msg={new_task, Opt}, _From,
+handle_call(get_state, _From, State)->
+    {reply, {ok, State}, State};
+handle_call({new_task, Opt}, _From,
             State=#manager_state{
-                     task_sets=TaskSets,
-                     is_master=_IsMaster,
-                     config=Conf
-                    })->
+                     task_dict=TaskDict,
+                     config=_Conf,
+                     master_node=MasterNode
+                    }) when MasterNode=:=node()->
     Task=proplists:get_value(task, Opt),
-    case sets:is_element(Task, TaskSets) of
-        true->
+    case dict:find(Task, TaskDict) of
+        {ok, _}->
             {reply, {error, "already existed"}, State};
-        false->
+        error->
+            Task=proplists:get_value(task, Opt),
             Mod=proplists:get_value(mod, Opt),
-            Workspace=proplists:get_value(workspace, Opt),
+            Workspace=proplists:get_value(mod, Opt),
+            LeaderNode=proplists:get_value(leader_node, Opt),
+            ThreadAlloc=proplists:get_value(thread_alloc, Opt),
+            {_, ThreadNum}=proplists:lookup(node(), ThreadAlloc),
             MasterId=?task_id(Task, master),
 
-            MasterNode=proplists:get_value(Conf, master),
-            LocalNode=node(),
-            ConfNodes=proplists:get_value(Conf, nodes, []),
-            ValidNodes=?get_valid_nodes(ConfNodes),
-            if
-                MasterNode=:=LocalNode->
-                    TaskAlloc1=proplists:get_value(Opt, task_alloc),
-                    TaskAlloc2=
-                    lists:foldl(
-                      fun(N={X, _}, Acc)->
-                              case lists:member(X, ValidNodes)
-                                   andalso MasterNode=/=X of
-                                  true->
-                                      case gen_server:call(
-                                             {stolas_manager, X},
-                                             Msg) of
-                                          {ok, _}->[N|Acc];
-                                          _->Acc
-                                      end;
-                                  false->Acc
-                              end
-                      end, [], TaskAlloc1),
-                    TaskAlloc3=case proplists:lookup(LocalNode,
-                                                        TaskAlloc1) of
-                                   none->[{LocalNode, 0}|TaskAlloc2];
-                                   T->[T|TaskAlloc2]
-                               end,
-                    ThreadNum=lists:sum([X||{_, X}<-TaskAlloc3]),
-                    MasterSpec=?master_spec(MasterId, ThreadNum, Mod, Workspace,
-                                            Task, ConfNodes),
-                    WorkerSpecs=?worker_specs(MasterId, ThreadNum, Mod,
-                                              Workspace, Task),
-                    Res=?start_task(Task, [MasterSpec|WorkerSpecs]),
-                    NewTaskSets=sets:add_element(Task, TaskSets),
+            MasterSpec=?master_spec({MasterId, LeaderNode}, ThreadNum, Mod,
+                                    Workspace, Task),
+            WorkerSpecs=?worker_specs(MasterId, ThreadNum, Mod, Workspace, Task),
+            Res=?start_task(Task, [MasterSpec|WorkerSpecs]),
+            case Res of
+                {ok, _}->
+                    NewTaskDict=dict:store(Task, LeaderNode, TaskDict),
                     InitArgs=proplists:get_value(init_args, Opt),
                     gen_server:cast(MasterId, {init, InitArgs}),
-                    {reply, Res, State#manager_state{
-                                   task_sets=NewTaskSets}};
-                true->
-                    ok
+                    {reply, Res, State#manager_state{task_dict=NewTaskDict}};
+                _->{reply, {error, Res}, State}
             end
     end;
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
+handle_cast(sync_state, State=#manager_state{
+                                 master_node=MasterNode
+                                }) when MasterNode=/=node()->
+    NewState=case gen_server:call({stolas_manager, MasterNode}, get_state) of
+                 {ok, S}->S;
+                 _->State
+             end,
+    {noreply, NewState};
 handle_cast({close_task, Task, Res}, State=#manager_state{
-                                              task_sets=TaskSets
+                                              task_dict=TaskDict
                                              })->
-    case sets:is_element(Task, TaskSets) of
-        true->
+    case dict:find(Task, TaskDict) of
+        {ok, _LeaderNode}->
             supervisor:terminate_child(stolas_sup, Task),
             supervisor:delete_child(stolas_sup, Task),
             if
@@ -175,8 +175,8 @@ handle_cast({close_task, Task, Res}, State=#manager_state{
                       [Task, Role, Reason, Msg])
             end,
             {noreply, State#manager_state{
-                        task_sets=sets:del_element(Task, TaskSets)}};
-        false->
+                        task_dict=dict:erase(Task, TaskDict)}};
+        error->
             {noreply, State}
     end;
 
@@ -208,9 +208,9 @@ process_conf(Conf)->
             error_logger:add_report_handler(stolas_log_handler, [LogPath]);
         _->ok
     end,
-    IsMaster=proplists:get_value(master, Conf)=:=node(),
+    MasterNode=proplists:get_value(master_node, Conf),
                  
-    {PingTref, IsMaster}.
+    {PingTref, MasterNode}.
 
 cancel_conf(#manager_state{
                ping_tref=PingTref

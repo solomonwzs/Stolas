@@ -10,12 +10,7 @@ readable_datetime(Date)->
                     [Y, M, D, H, MM, S])).
 
 get_config()->
-    try
-        gen_server:call(stolas_manager, get_config, 500)
-    catch
-        _:_->
-            get_config(default)
-    end.
+    gen_server:call(stolas_manager, get_config, 500).
 get_config(default)->
     {ok, ConfFile}=application:get_env(stolas, config_file),
     get_config(ConfFile);
