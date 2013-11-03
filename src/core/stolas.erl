@@ -15,7 +15,6 @@ ensure_started(App) ->
             ok
     end.
 
-
 %% @spec start() -> ok
 %% @doc Start the stolas server.
 start() ->

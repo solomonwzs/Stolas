@@ -75,13 +75,18 @@ handle_call(_Msg, _From, State)->
 
 handle_cast({init, InitArgs}, State=#master_state{
                                        task=Task,
+                                       leader=Leader,
                                        thread_num=ThreadNum,
                                        workspace=Workspace,
                                        mod=Mod
                                       })->
     try
         file:make_dir(Workspace),
-        case apply(Mod, init, [Workspace, InitArgs]) of
+        Func=if
+                 Leader=:=node()->
+                     fun()->apply(Mod, init, [Workspace, InitArgs]) end
+             end,
+        case Func() of
             ok->
                 ?broadcast_workers_msg(Task, ThreadNum, start_task);
             {error, Reason}->

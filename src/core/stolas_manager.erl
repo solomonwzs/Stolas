@@ -129,13 +129,14 @@ handle_call({new_task, Opt}, _From,
 
             MasterSpec=?master_spec({MasterId, LeaderNode}, ThreadNum, Mod,
                                     Workspace, Task),
-            WorkerSpecs=?worker_specs(MasterId, ThreadNum, Mod, Workspace, Task),
+            WorkerSpecs=?worker_specs(MasterId, ThreadNum, Mod, Workspace,
+                                      Task),
             Res=?start_task(Task, [MasterSpec|WorkerSpecs]),
             case Res of
                 {ok, _}->
                     NewTaskDict=dict:store(Task, LeaderNode, TaskDict),
                     InitArgs=proplists:get_value(init_args, Opt),
-                    gen_server:cast(MasterId, {init, InitArgs}),
+                    gen_server:cast({MasterId, node()}, {init, InitArgs}),
                     {reply, Res, State#manager_state{task_dict=NewTaskDict}};
                 _->{reply, {error, Res}, State}
             end
