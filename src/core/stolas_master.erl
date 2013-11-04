@@ -11,6 +11,7 @@
         lists:foreach(fun(X)->
                               gen_server:cast(?task_id(Task, X), Msg)
                       end, lists:seq(1, ThreadNum))).
+-define(main_worker(Task), ?task_id(Task, 0)).
 
 -record(master_state, {
           task::atom(),
@@ -19,7 +20,7 @@
           workspace::string(),
           sub_num::integer()|null,
           thread_num::integer(),
-          work_results::term(),
+          work_results_log::term(),
           finish_tasks::integer()
          }).
 
@@ -42,7 +43,7 @@ init([Opt])->
                     mod=Mod,
                     workspace=Workspace,
                     thread_num=ThreadNum,
-                    work_results=Log,
+                    work_results_log=Log,
                     task=Task,
                     finish_tasks=0
                    }}
@@ -149,12 +150,13 @@ handle_cast({reduce, {ok, Name={_Node, _WorkerName}}},
         true->ok
     end,
     {noreply, State#master_state{finish_tasks=FinishTasks+1}};
-handle_cast({map_ok, Name, TaskArgs, Result}, State=#master_state{
-                                                       task=Task,
-                                                       work_results=WorkResult
-                                                      })->
+handle_cast({map_ok, Name, TaskArgs, Result},
+            State=#master_state{
+                     task=Task,
+                     work_results_log=WorkResultLog
+                    })->
     error_logger:info_msg("Task:~p, Worker:~p map ok", [Task, Name]),
-    disk_log:blog(WorkResult, term_to_binary({Name, TaskArgs, Result})),
+    disk_log:blog(WorkResultLog, term_to_binary({Name, TaskArgs, Result})),
     {noreply, State};
 handle_cast({map_error, Name, Reason}, State=#master_state{
                                                 task=Task
@@ -178,7 +180,7 @@ code_change(_Vsn, State, _Extra)->
     {ok, State}.
 
 terminate(_Reason, #master_state{
-                      work_results=WorkResult
+                      work_results_log=WorkResultLog
                      })->
-    disk_log:close(WorkResult),
+    disk_log:close(WorkResultLog),
     ok.

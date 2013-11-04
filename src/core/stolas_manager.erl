@@ -48,7 +48,7 @@
                                                 integer_to_list(X))}]]},
                            permanent, 5000, worker, [stolas_worker]
                           }
-                  end, lists:seq(1, ThreadNum))).
+                  end, lists:seq(0, ThreadNum))).
 -define(start_task(Task, ChildSpecs),
         supervisor:start_child(
           stolas_sup,
@@ -180,7 +180,6 @@ handle_cast({close_task, Task, Res}, State=#manager_state{
         error->
             {noreply, State}
     end;
-
 handle_cast(_Msg, State)->
     {noreply, State}.
 

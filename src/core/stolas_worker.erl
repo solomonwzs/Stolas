@@ -20,6 +20,7 @@ init([RegName, Opt])->
     Workspace=proplists:get_value(workspace, Opt),
     Mod=proplists:get_value(mod, Opt),
     Master=proplists:get_value(master, Opt),
+    file:make_dir(Workspace),
     {ok, #worker_state{
             mod=Mod,
             name=RegName,
@@ -30,10 +31,43 @@ init([RegName, Opt])->
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
-handle_cast(start_task, State=#worker_state{
-                                 workspace=Workspace
-                                })->
-    file:make_dir(Workspace),
+handle_cast({init, InitArgs}, State=#worker_state{
+                                       mod=Mod,
+                                       workspace=Workspace,
+                                       master=Master,
+                                       name=WorkerName
+                                      })->
+    Feedback=try
+                 case apply(Mod, init, [Workspace, InitArgs]) of
+                     ok->
+                         {init_complete, {ok, WorkerName}};
+                     {error, Reason}->
+                         {init_complete, {failed, WorkerName, Reason}}
+                 end
+             catch
+                 T:R->{init_complete, {failed, WorkerName, {T, R}}}
+             end,
+    gen_server:cast(Master, Feedback),
+    {noreply, State};
+handle_cast(reduce, State=#worker_state{
+                             mod=Mod,
+                             workspace=Workspace,
+                             master=Master,
+                             name=WorkerName
+                            })->
+    Feedback=try
+                 case apply(Mod, reduce, [Workspace]) of
+                     {ok, Result}->
+                         {reduce_complete, {ok, WorkerName}};
+                     {error, Reason}->
+                         {reduce_complete, {failed, WorkerName, Reason}}
+                 end
+             catch
+                 T:R->{reduce_complete, {failed, WorkerName, {T, R}}}
+             end,
+    gen_server:cast(Master, Feedback),
+    {noreply, State};
+handle_cast(start_task, State)->
     gen_server:cast(self(), get_task),
     {noreply, State};
 handle_cast(get_task, State=#worker_state{
