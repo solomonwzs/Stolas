@@ -21,7 +21,8 @@
           sub_num::integer()|null,
           thread_num::integer(),
           work_results_log::term(),
-          finish_tasks::integer()
+          finish_tasks::integer(),
+          status::init|map|reduce|idle|interrupt|completed
          }).
 
 start_link(RegName, Opt)->
@@ -36,19 +37,20 @@ init([Opt])->
         {error, Err}->
             {stop, {"create work log failed", Err}};
         {ok, Log}->
-            Workspace=proplists:get_value(workspace, Opt),
-            Mod=proplists:get_value(mod, Opt),
             ThreadNum=proplists:get_value(thread_num, Opt),
+            Leader=proplists:get_value(leader, Opt),
             {ok, #master_state{
-                    mod=Mod,
-                    workspace=Workspace,
                     thread_num=ThreadNum,
                     work_results_log=Log,
                     task=Task,
-                    finish_tasks=0
+                    leader=Leader,
+                    finish_tasks=0,
+                    status=idle
                    }}
     end.
 
+handle_call(get_status, _From, State)->
+    {reply, State#master_state.status, State};
 handle_call({alloc, WorkerName}, {Pid, _}, State=#master_state{
                                                     mod=Mod,
                                                     task=Task
@@ -74,82 +76,54 @@ handle_call({alloc, WorkerName}, {Pid, _}, State=#master_state{
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
-handle_cast({init, InitArgs}, State=#master_state{
-                                       task=Task,
-                                       leader=Leader,
-                                       thread_num=ThreadNum,
-                                       workspace=Workspace,
-                                       mod=Mod
-                                      })->
-    try
-        file:make_dir(Workspace),
-        Func=if
-                 Leader=:=node()->
-                     fun()->apply(Mod, init, [Workspace, InitArgs]) end
-             end,
-        case Func() of
-            ok->
-                ?broadcast_workers_msg(Task, ThreadNum, start_task);
-            {error, Reason}->
-                gen_server:cast(stolas_manager,
-                                {close_task, Task,
-                                 #task_failure_msg{
-                                    task=Task,
-                                    role=master,
-                                    reason=Reason,
-                                    msg="Task initialization failed"
-                                   }})
-        end
-    catch
-        T:R->gen_server:cast(stolas_manager,
-                             {close_task, Task,
-                              #task_failure_msg{
-                                 task=Task,
-                                 role=master,
-                                 reason={T, R},
-                                 msg="unexpected error"
-                                }})
-    end,
-    {noreply, State};
-handle_cast({reduce, {ok, Name={_Node, _WorkerName}}},
-            State=#master_state{
-                     finish_tasks=FinishTasks,
-                     mod=Mod,
-                     workspace=Workspace,
-                     thread_num=ThreadNum,
-                     task=Task
-                    })->
-    error_logger:info_msg("Task:~p, Worker:~p map finish", [Task, Name]),
-    if
-        FinishTasks+1=:=ThreadNum->
-            try
-                case apply(Mod, reduce, [Workspace]) of
-                    ok->
-                        gen_server:cast(stolas_manager,
-                                        {close_task, Task, normal});
-                    {error, Reason}->
-                        gen_server:cast(stolas_manager,
-                                        {close_task, Task,
-                                         #task_failure_msg{
+handle_cast(wait_leader, State=#master_state{
+                                  task=Task,
+                                  leader=Leader,
+                                  thread_num=ThreadNum,
+                                  status=init
+                                 }) when Leader=/=node()->
+    NewStatus=case gen_server:call({stolas_master, Leader}, get_status) of
+                  init->
+                      timer:apply_after(1000, gen_server, cast,
+                                        [self(), wait_leader]),
+                      init;
+                  map->
+                      ?broadcast_workers_msg(Task, ThreadNum, map),
+                      map
+              end,
+    {noreply, State#master_state{status=NewStatus}};
+handle_cast(Msg={init, _InitArgs}, State=#master_state{
                                             task=Task,
-                                            role=master,
-                                            reason=Reason,
-                                            msg="Task reduce failed"
-                                           }})
-                end
-            catch
-                T:R->gen_server:cast(stolas_manager,
-                                     {close_task, Task,
-                                      #task_failure_msg{
-                                         task=Task,
-                                         role=master,
-                                         reason={T, R},
-                                         msg="unexpected error"
-                                        }})
-            end;
-        true->ok
+                                            leader=Leader,
+                                            status=idle
+                                           })->
+    if
+        Leader=:=node()->gen_server:cast(?main_worker(Task), Msg);
+        true->gen_server:cast(self(), wait_leader)
     end,
-    {noreply, State#master_state{finish_tasks=FinishTasks+1}};
+    {noreply, State#master_state{status=init}};
+handle_cast({init_complete, Res}, State=#master_state{
+                                           leader=Leader,
+                                           task=Task,
+                                           status=init
+                                          }) when Leader=:=node()->
+    NewStatus=case Res of
+                  {ok, _WorkerName}->map;
+                  {failed, _WorkerName, Reason}->
+                      gen_server:cast(stolas_manager, {close_task, Task,
+                                                       #task_failure_msg{
+                                                          task=Task,
+                                                          reason=Reason
+                                                         }}),
+                      interrupt
+              end,
+    {noreply, State#master_state{status=NewStatus}};
+%handle_cast({reduce_complete, Res}, State=#master_state{
+%                                             status=reduce
+%                                            })->
+%    NewStatus=case Res of
+%                  {ok, _WorkerName, _Result}->
+%                      gen_server:cast(stolas_manager,)
 handle_cast({map_ok, Name, TaskArgs, Result},
             State=#master_state{
                      task=Task,

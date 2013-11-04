@@ -9,7 +9,7 @@
           mod::atom(),
           name::atom(),
           workspace::string(),
-          master::atom()|{atom(), atom()}
+          master::atom()
          }).
 
 start_link(RegName, Opt)->
@@ -28,6 +28,15 @@ init([RegName, Opt])->
             master=Master
            }}.
 
+handle_call({alloc, Node}, _From, State=#worker_state{
+                                           mod=Mod
+                                          })->
+    try
+        Task=apply(Mod, alloc, [Node]),
+        {reply, Task, State}
+    catch
+        T:R->{reply, {error, {T, R}}}
+    end;
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
@@ -58,7 +67,7 @@ handle_cast(reduce, State=#worker_state{
     Feedback=try
                  case apply(Mod, reduce, [Workspace]) of
                      {ok, Result}->
-                         {reduce_complete, {ok, WorkerName}};
+                         {reduce_complete, {ok, WorkerName, Result}};
                      {error, Reason}->
                          {reduce_complete, {failed, WorkerName, Reason}}
                  end
@@ -67,30 +76,26 @@ handle_cast(reduce, State=#worker_state{
              end,
     gen_server:cast(Master, Feedback),
     {noreply, State};
-handle_cast(start_task, State)->
-    gen_server:cast(self(), get_task),
-    {noreply, State};
-handle_cast(get_task, State=#worker_state{
+handle_cast(map, State=#worker_state{
                                mod=Mod,
                                workspace=Workspace,
                                master=Master,
                                name=WorkerName
                               })->
-    Name={WorkerName, node()},
     case gen_server:call(Master, alloc) of
-        none->gen_server:cast(Master, {reduce, {ok, Name}});
+        none->gen_server:cast(Master, {reduce, {ok, WorkerName}});
         {ok, TaskArgs}->
             try
                 case apply(Mod, map, [Workspace, TaskArgs]) of
                     {ok, Result}->
-                        gen_server:cast(Master, {map_ok, Name, TaskArgs,
+                        gen_server:cast(Master, {map_ok, WorkerName, TaskArgs,
                                                  Result}),
-                        gen_server:cast(self(), get_task);
+                        gen_server:cast(self(), map);
                     {error, Reason}->
-                        gen_server:cast(Master, {map_error, Name, Reason})
+                        gen_server:cast(Master, {map_error, WorkerName, Reason})
                 end
             catch
-                T:R->gen_server:cast(Master, {map_error, Name, {T, R}})
+                T:R->gen_server:cast(Master, {map_error, WorkerName, {T, R}})
             end
     end,
     {noreply, State};
