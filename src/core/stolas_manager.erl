@@ -7,6 +7,13 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          code_change/3, terminate/2]).
 
+-record(manager_state, {
+          task_dict::tuple(),
+          ping_tref::term(),
+          master_node::atom(),
+          config::list(tuple())
+         }).
+
 -define(PING_INTERVAL, 1500).
 
 -define(sub_workspace(Workspace, X), filename:join(Workspace, X)).
@@ -59,13 +66,6 @@
         {proplists:lookup(LeaderNode, ThreadAlloc),
          proplists:delete(LeaderNode, ThreadAlloc)}).
 
--record(manager_state, {
-          task_dict::tuple(),
-          ping_tref::term(),
-          master_node::atom(),
-          config::list(tuple())
-         }).
-
 start_link(RegName, Conf)->
     gen_server:start_link({local, RegName}, ?MODULE, [Conf], []).
 
@@ -73,7 +73,7 @@ init([Conf])->
     process_flag(trap_exit, true),
     {PingTref, MasterNode}=process_conf(Conf),
     {ok, #manager_state{
-            task_dict=dict:new(),
+            task_dict=?dict_new('stolas:task_dict'),
             ping_tref=PingTref,
             master_node=MasterNode,
             config=Conf
@@ -94,7 +94,7 @@ handle_call(reload_config, _From, State=#manager_state{
                                            master_node=MasterNode,
                                            task_dict=TaskDict
                                           }) when MasterNode=:=node()->
-    case dict:size(TaskDict) of
+    case ?dict_size(TaskDict) of
         0->
             NewConf=stolas_utils:get_value(default),
             cancel_conf(State),
@@ -115,7 +115,7 @@ handle_call({new_task, Opt}, _From,
                      master_node=MasterNode
                     }) when MasterNode=:=node()->
     Task=proplists:get_value(task, Opt),
-    case dict:find(Task, TaskDict) of
+    case ?dict_find(TaskDict, Task) of
         {ok, _}->
             {reply, {error, "already existed"}, State};
         error->
@@ -134,7 +134,7 @@ handle_call({new_task, Opt}, _From,
             Res=?start_task(Task, [MasterSpec|WorkerSpecs]),
             case Res of
                 {ok, _}->
-                    NewTaskDict=dict:store(Task, LeaderNode, TaskDict),
+                    NewTaskDict=?dict_add(TaskDict, Task, LeaderNode),
                     InitArgs=proplists:get_value(init_args, Opt),
                     gen_server:cast({MasterId, node()}, {init, InitArgs}),
                     {reply, Res, State#manager_state{task_dict=NewTaskDict}};
@@ -155,7 +155,7 @@ handle_cast(sync_state, State=#manager_state{
 handle_cast({close_task, Task, Res}, State=#manager_state{
                                               task_dict=TaskDict
                                              })->
-    case dict:find(Task, TaskDict) of
+    case ?dict_find(TaskDict, Task) of
         {ok, _LeaderNode}->
             supervisor:terminate_child(stolas_sup, Task),
             supervisor:delete_child(stolas_sup, Task),
@@ -167,16 +167,16 @@ handle_cast({close_task, Task, Res}, State=#manager_state{
                                           [Task]);
                 is_record(Res, task_failure_msg)->
                     #task_failure_msg{
-                       role=Role,
+                       worker=Worker,
                        reason=Reason,
                        msg=Msg
                       }=Res,
                     error_logger:error_msg(
-                      "Task:~p failed, role:~p, reason:~p, msg:~p",
-                      [Task, Role, Reason, Msg])
+                      "Task:~p failed, worker:~p, reason:~p, msg:~p",
+                      [Task, Worker, Reason, Msg])
             end,
             {noreply, State#manager_state{
-                        task_dict=dict:erase(Task, TaskDict)}};
+                        task_dict=?dict_del(TaskDict, Task)}};
         error->
             {noreply, State}
     end;
@@ -213,8 +213,10 @@ process_conf(Conf)->
     {PingTref, MasterNode}.
 
 cancel_conf(#manager_state{
+               task_dict=TaskDict,
                ping_tref=PingTref
               })->
     timer:cancel_conf(PingTref),
+    ?dict_drop(TaskDict),
     error_logger:delete_report_handler(stolas_log_handler),
     ok.
