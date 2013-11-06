@@ -28,11 +28,18 @@ init([RegName, Opt])->
             master=Master
            }}.
 
-handle_call(alloc, {Pid, _}, State=#worker_state{
+handle_call({alloc, WorkerName}, {Pid, _}, State=#worker_state{
                                            master=Master
                                           })->
     try
-        Task=apply(?task_mod(Master), alloc, [node(Pid)]),
+        Node=node(Pid),
+        Task=apply(?task_mod(Master), alloc, [Node]),
+        case Task of
+            none->
+                gen_server:cast(Master, alloc_end);
+            {ok, Args}->
+                gen_server:cast(Master, {new_alloc, WorkerName, Node, Args})
+        end,
         {reply, Task, State}
     catch
         T:R->{reply, {error, {T, R}}}
@@ -80,8 +87,8 @@ handle_cast(map, State=#worker_state{
                           name=WorkerName
                          })->
     MainWorker=?task_main_worker(Master),
-    case gen_server:call(MainWorker, alloc) of
-        none->gen_server:cast(Master, {reduce, {ok, WorkerName}});
+    case gen_server:call(MainWorker, {alloc, WorkerName}) of
+        none->gen_server:cast(Master, {work_end, WorkerName});
         {ok, TaskArgs}->
             Mod=?task_mod(Master),
             try
