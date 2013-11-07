@@ -33,7 +33,7 @@ start_link(RegName, Opt)->
 init([Opt])->
     process_flag(trap_exit, true),
     Task=proplists:get_value(task, Opt),
-    WorkResultFile=proplists:get_value(work_result, Opt),
+    WorkResultFile=proplists:get_value(work_result_file, Opt),
     case disk_log:open([{name, lists:concat([Task, ":worklog"])},
                         {file, WorkResultFile}]) of
         {error, Err}->
@@ -183,35 +183,49 @@ handle_cast({work_end, _WorkerName}, State=#master_state{
                                                  status=map
                                                 })->
     NewFinish=Finish+1,
-    NewStatus=if
-                  NewFinish=:=ThreadNum->
-                      gen_server:cast({stolas_master, Leader}, map_end),
-                      reduce;
-                  true->map
-              end,
-    {noreply, State#master_state{finish_thread=NewFinish, status=NewStatus}};
+    if
+        NewFinish=:=ThreadNum->
+            gen_server:cast({stolas_master, Leader}, map_end);
+        true->ok
+    end,
+    {noreply, State#master_state{finish_thread=NewFinish}};
 handle_cast(map_end, State=#master_state{
                               task=Task,
                               leader=Leader,
-                              status=reduce
+                              mod=Mod,
+                              alloc_task_dict=AllocTaskDict,
+                              status=map
                              }) when Leader=:=node()->
-    gen_server:cast(?main_worker(Task), reduce),
-    {noreply, State};
-%handle_cast({reduce_ok, _WorkerName, _Result},
-%            State=#master_state{
-%                     task=Task,
-%                     leader=Leader,
-%                     status=reduce
-%                    }) when Leader=:=node()->
-%    gen_server:cast(stolas_manager, {close_task, Task, normal}),
-%    {noreply, State#master_state{status=completed}};
-%handle_cast({reduce_error, WorkerName, Reason},
-%            State=#master_state{
-%                     task=Task,
-%                     leader=Leader,
-%                     status=reduce
-%                    }) when Leader=:=node()->
-%    gen_server:cast(stolas_manager, {close_task, Task})
+    NewStatus=case ?dict_size(AllocTaskDict) of
+                  0->
+                      gen_server:cast(?main_worker(Task), {reduce, Mod}),
+                      reduce;
+                  _->map
+              end,
+    {noreply, State#master_state{status=NewStatus}};
+handle_cast({reduce_ok, _WorkerName, _Result},
+            State=#master_state{
+                     task=Task,
+                     leader=Leader,
+                     status=reduce
+                    }) when Leader=:=node()->
+    gen_server:cast(stolas_manager, {close_task, Task, normal}),
+    {noreply, State#master_state{status=completed}};
+handle_cast({reduce_error, WorkerName, Reason},
+            State=#master_state{
+                     task=Task,
+                     mod=Mod,
+                     leader=Leader,
+                     status=reduce
+                    }) when Leader=:=node()->
+    gen_server:cast(stolas_manager, {close_task, Task,
+                                     #task_failure_msg{
+                                        worker={WorkerName, node},
+                                        mfc={Mod, reduce, []},
+                                        reason=Reason,
+                                        msg="reduce failed"
+                                       }}),
+    {noreply, State#master_state{status=interrupt}};
 handle_cast(_Msg, State)->
     {noreply, State}.
 
