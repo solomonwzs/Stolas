@@ -26,7 +26,7 @@
 -define(valid_nodes(Conf),
         sets:to_list(sets:intersection(
                        sets:from_list(proplists:get_value(nodes, Conf)),
-                       sets:from_list(nodes())
+                       sets:from_list([node()|nodes()])
                       ))).
 -define(master_spec(MasterId, ThreadNum, Mod, Workspace, Task, Leader),
         {
@@ -121,6 +121,8 @@ handle_call({new_task, Opt}, _From,
             Workspace=proplists:get_value(workspace, Opt),
             LeaderNode=proplists:get_value(leader_node, Opt),
 
+            file:make_dir(filename:join(Workspace, "log")),
+
             ValidNodes=?valid_nodes(Conf),
             ValidAlloc=lists:filter(
                          fun({N, _})->
@@ -137,7 +139,7 @@ handle_call({new_task, Opt}, _From,
                             NewTaskDict=?dict_add(TaskDict, Task, LeaderNode),
                             InitArgs=proplists:get_value(init_args, Opt),
                             gen_server:cast({MasterId, node()},
-                                            {init, Mod, InitArgs}),
+                                            {init, InitArgs}),
                             lists:foreach(
                               fun({N, T})->
                                       new_task(N, T, Mod, Workspace, Task,
@@ -220,11 +222,11 @@ process_conf(Conf)->
     {PingTref, MasterNode}.
 
 cancel_conf(#manager_state{
-               task_dict=TaskDict,
+               task_dict=_TaskDict,
                ping_tref=PingTref
               })->
     timer:cancel_conf(PingTref),
-    ?dict_drop(TaskDict),
+    ?dict_drop(_TaskDict),
     error_logger:delete_report_handler(stolas_log_handler),
     ok.
 
