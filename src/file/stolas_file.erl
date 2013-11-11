@@ -1,5 +1,7 @@
 -module(stolas_file).
 -export([upload_module/2]).
+-export([get_work_path/1]).
+-export([distribute/2]).
 -export([upload_file/3, download_file/3]).
 
 -define(MAX_BYTES, 10240).
@@ -92,3 +94,16 @@ get_work_path(Node)->
         {ok, Path}->Path;
         {error, Reason}->error(Reason)
     end.
+
+distribute(Resources, Nodes)->
+    Func=fun(Node)->
+                 CWD=get_work_path(Node),
+                 lists:foreach(
+                   fun({Path, File})->
+                           AbsPath=filename:join(CWD, Path),
+                           os:cmd("mkdir -p "++AbsPath),
+                           upload_file(filename:join(Path, File), Node,
+                                       filename:join(AbsPath, File))
+                   end, Resources)
+         end,
+    lists:foreach(Func, Nodes).
