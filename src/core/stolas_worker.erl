@@ -90,12 +90,19 @@ handle_cast({reduce, Mod}, State=#worker_state{
     Feedback=try
                  case apply(Mod, reduce, [Workspace]) of
                      {ok, Result}->
-                         {reduce_ok, WorkerName, Result};
+                         %{reduce_ok, WorkerName, Result};
+                         ?send_msg_to_master(Master, ok, reduce,
+                                             {WorkerName, Result});
                      {error, Reason}->
-                         {reduce_error, WorkerName, Reason}
+                         %{reduce_error, WorkerName, Reason}
+                         ?send_msg_to_master(Master, error, reduce,
+                                             {WorkerName, Reason})
                  end
              catch
-                 T:R->{reduce_error, WorkerName, {T, R}}
+                 T:R->
+                     %{reduce_error, WorkerName, {T, R}}
+                     ?send_msg_to_master(Master, error, reduce,
+                                         {WorkerName, {T, R}})
              end,
     gen_server:cast(Master, Feedback),
     {noreply, State};
@@ -106,26 +113,38 @@ handle_cast(map, State=#worker_state{
                          })->
     MainWorker=?task_main_worker(Master),
     case gen_server:call(MainWorker, {alloc, WorkerName}) of
-        none->gen_server:cast(Master, {work_end, WorkerName});
+        none->
+            %gen_server:cast(Master, {work_end, WorkerName});
+            ?send_msg_to_master(Master, 'end', map, WorkerName);
         {ok, TaskArgs}->
             Mod=?task_mod(Master),
             try
                 Return=apply(Mod, map, [Workspace, TaskArgs]),
                 case Return of
                     {ok, Result}->
-                        gen_server:cast(Master, {map_ok, {WorkerName, node()},
-                                                 TaskArgs, Result}),
+                        %gen_server:cast(Master, {map_ok, {WorkerName, node()},
+                        %                         TaskArgs, Result}),
+                        ?send_msg_to_master(Master, ok, map,
+                                            {{WorkerName, node()}, TaskArgs,
+                                             Result}),
                         gen_server:cast(self(), map);
                     {error, Reason}->
-                        gen_server:cast(Master, {map_error,
-                                                 {WorkerName, node()}, TaskArgs,
-                                                 Reason})
+                        %gen_server:cast(Master, {map_error,
+                        %                         {WorkerName, node()}, TaskArgs,
+                        %                         Reason})
+                        ?send_msg_to_master(Master, error, map,
+                                            {{WorkerName, node()}, TaskArgs,
+                                             Reason})
                 end,
                 gen_server:cast(MainWorker, {accumulate, WorkerName, node(),
                                              TaskArgs, Return})
             catch
-                T:R->gen_server:cast(Master, {map_error, {WorkerName, node()},
-                                              TaskArgs, {T, R}})
+                T:R->
+                    %gen_server:cast(Master, {map_error, {WorkerName, node()},
+                    %                         TaskArgs, {T, R}})
+                    ?send_msg_to_master(Master, error, map,
+                                        {{WorkerName, node()}, TaskArgs,
+                                         {T, R}})
             end;
         {error, _Reason}->ok
     end,
@@ -138,11 +157,21 @@ handle_cast({accumulate, WorkerName, Node, TaskArgs, Return},
                     })->
     Mod=?task_mod(Master),
     NewAcc=try
-               apply(Mod, accumulate, [Workspace, WorkerName, Node, TaskArgs,
-                                       Return])
+               case apply(Mod, accumulate, [Workspace, WorkerName, Node,
+                                            TaskArgs, Return]) of
+                   {ok, NA}->
+                       ?send_msg_to_master(Master, ok, accumulate,
+                                           {WorkerName, Node}),
+                       NA;
+                   {error, Reason}->
+                       ?send_msg_to_master(Master, error, accumulate,
+                                           {WorkerName, Node, Reason}),
+                       Acc
+               end
            catch
                T:R->
-                   gen_server:cast(Master, {acc_error, {T, R}}),
+                   ?send_msg_to_master(Master, error, accumulate,
+                                       {WorkerName, Node, {T, R}}),
                    Acc
            end,
     {noreply, State#worker_state{acc=NewAcc}};

@@ -13,7 +13,7 @@
 -callback accumulate(Workspace::string(), WorkerName::atom(), Node::atom(),
                      TaskArgs::term(),
                      Return::{ok, Result::term()}|{error, Reason::term()})->
-    Acc::term().
+    {ok, Acc::term()}|{error, Reason::term()}.
 
 -callback reduce(Workspace::string())->
     {ok, Result::term()}|{error, Reason::term()}.
