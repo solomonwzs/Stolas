@@ -11,7 +11,7 @@
           name::atom(),
           workspace::string(),
           master::atom(),
-          acc::null|term()
+          acc::undefined|term()
          }).
 
 -define(task_mod(Master), gen_server:call(Master, get_mod)).
@@ -34,7 +34,8 @@ init([RegName, Opt])->
     {ok, #worker_state{
             name=RegName,
             workspace=Workspace,
-            master=Master
+            master=Master,
+            acc=undefined
            }}.
 
 handle_call({alloc, WorkerName}, {Pid, _}, State=#worker_state{
@@ -62,11 +63,11 @@ handle_call({alloc, WorkerName}, {Pid, _}, State=#worker_state{
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
-handle_cast({init, Mod, InitArgs}, State=#worker_state{
-                                       workspace=Workspace,
-                                       master=Master,
-                                       name=WorkerName
-                                      })->
+handle_cast({init, Mod, InitArgs, Acc}, State=#worker_state{
+                                                 workspace=Workspace,
+                                                 master=Master,
+                                                 name=WorkerName
+                                                })->
     try
         case apply(Mod, init, [Workspace, InitArgs]) of
             ok->
@@ -81,30 +82,30 @@ handle_cast({init, Mod, InitArgs}, State=#worker_state{
             %{init_error, WorkerName, {T, R}}
             ?send_msg_to_master(Master, error, init, {WorkerName, {T, R}})
     end,
-    {noreply, State};
+    {noreply, State#worker_state{acc=Acc}};
 handle_cast({reduce, Mod}, State=#worker_state{
                              workspace=Workspace,
                              master=Master,
-                             name=WorkerName
+                             name=WorkerName,
+                             acc=Acc
                             })->
-    Feedback=try
-                 case apply(Mod, reduce, [Workspace]) of
-                     {ok, Result}->
-                         %{reduce_ok, WorkerName, Result};
-                         ?send_msg_to_master(Master, ok, reduce,
-                                             {WorkerName, Result});
-                     {error, Reason}->
-                         %{reduce_error, WorkerName, Reason}
-                         ?send_msg_to_master(Master, error, reduce,
-                                             {WorkerName, Reason})
-                 end
-             catch
-                 T:R->
-                     %{reduce_error, WorkerName, {T, R}}
-                     ?send_msg_to_master(Master, error, reduce,
-                                         {WorkerName, {T, R}})
-             end,
-    gen_server:cast(Master, Feedback),
+    try
+        case apply(Mod, reduce, [Workspace, Acc]) of
+            {ok, Result}->
+                %{reduce_ok, WorkerName, Result};
+                ?send_msg_to_master(Master, ok, reduce,
+                                    {WorkerName, Result});
+            {error, Reason}->
+                %{reduce_error, WorkerName, Reason}
+                ?send_msg_to_master(Master, error, reduce,
+                                    {WorkerName, Reason})
+        end
+    catch
+        T:R->
+            %{reduce_error, WorkerName, {T, R}}
+            ?send_msg_to_master(Master, error, reduce,
+                                {WorkerName, {T, R}})
+    end,
     {noreply, State};
 handle_cast(map, State=#worker_state{
                           workspace=Workspace,
@@ -157,7 +158,7 @@ handle_cast({accumulate, WorkerName, Node, TaskArgs, Return},
                     })->
     Mod=?task_mod(Master),
     NewAcc=try
-               case apply(Mod, accumulate, [Workspace, WorkerName, Node,
+               case apply(Mod, accumulate, [Workspace, Acc, WorkerName, Node,
                                             TaskArgs, Return]) of
                    {ok, NA}->
                        ?send_msg_to_master(Master, ok, accumulate,

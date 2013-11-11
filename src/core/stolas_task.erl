@@ -10,12 +10,12 @@
 -callback map(Workspace::string(), TaskArgs::term())->
     {ok, Result::term()}|{error, Reason::term()}.
 
--callback accumulate(Workspace::string(), WorkerName::atom(), Node::atom(),
-                     TaskArgs::term(),
+-callback accumulate(Workspace::string(), Acc::term(), WorkerName::atom(),
+                     Node::atom(), TaskArgs::term(),
                      Return::{ok, Result::term()}|{error, Reason::term()})->
-    {ok, Acc::term()}|{error, Reason::term()}.
+    {ok, NewAcc::term()}|{error, Reaason::term()}.
 
--callback reduce(Workspace::string())->
+-callback reduce(Workspace::string(), Acc::term())->
     {ok, Result::term()}|{error, Reason::term()}.
 
 start(Opt)->

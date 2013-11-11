@@ -138,8 +138,9 @@ handle_call({new_task, Opt}, _From,
                         {ok, _, MasterId}->
                             NewTaskDict=?dict_add(TaskDict, Task, LeaderNode),
                             InitArgs=proplists:get_value(init_args, Opt),
+                            Acc=proplists:get_value(acc, Opt),
                             gen_server:cast({MasterId, node()},
-                                            {init, InitArgs}),
+                                            {init, InitArgs, Acc}),
                             lists:foreach(
                               fun({N, T})->
                                       new_task(N, T, Mod, Workspace, Task,
