@@ -19,6 +19,7 @@
           task::atom(),
           leader::atom(),
           mod::atom(),
+          resources::list(),
           thread_num::integer(),
           alloc_task_dict::term(),
           alloc_end::true|false,
@@ -43,10 +44,12 @@ init([Opt])->
             ThreadNum=proplists:get_value(thread_num, Opt),
             Leader=proplists:get_value(leader, Opt),
             Mod=proplists:get_value(mod, Opt),
+            Resources=proplists:get_value(resources, Opt),
             {ok, #master_state{
                     task=Task,
                     leader=Leader,
                     mod=Mod,
+                    resources=Resources,
                     thread_num=ThreadNum,
                     alloc_task_dict=?dict_new(?alloc_task_dict_name(Task)),
                     work_results_log=Log,
@@ -72,6 +75,7 @@ handle_cast(wait_leader, State=#master_state{
                                   task=Task,
                                   leader=Leader,
                                   thread_num=ThreadNum,
+                                  resources=Resources,
                                   status=init
                                  }) when Leader=/=node()->
     NewStatus=case gen_server:call({stolas_master, Leader}, get_status) of
@@ -80,6 +84,7 @@ handle_cast(wait_leader, State=#master_state{
                                         [self(), wait_leader]),
                       init;
                   map->
+                      stolas_file:get_resources(Resources, Leader),
                       ?broadcast_workers_msg(Task, ThreadNum, map),
                       map;
                   S->S

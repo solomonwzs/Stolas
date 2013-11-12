@@ -1,25 +1,25 @@
 -module(stolas_file).
--export([upload_module/2]).
 -export([get_work_path/1]).
--export([distribute/2]).
--export([upload_file/3, download_file/3]).
+-export([distribute/2, get_resources/2]).
+-export([upload_file/2, download_file/2]).
 
 -define(MAX_BYTES, 10240).
 -define(RPC_TIMEOUT, 1500).
 
-upload_module(Mod, Node)->
-    Source=code:which(Mod),
-    Dest=filename:join(get_work_path(Node),
-                       lists:concat(["ebin/", Mod, ".beam"])),
-    upload_file(Source, Node, Dest).
+-define(make_dir(Node, Name), rpc:call(Node, os, cmd, ["mkdir -p "++Name],
+                                       ?RPC_TIMEOUT)).
 
-upload_file(Local, Node, Remote)->
-    copy_file(Local, Node, Remote, upload).
+-spec upload_file(Source::string(), Dest::{Remote::string(), Node::atom()})->
+    ok|{error, Reason::term()}.
+upload_file(Source, Dest)->
+    copy_file(Source, Dest, upload).
 
-download_file(Node, Remote, Local)->
-    copy_file(Local, Node, Remote, download).
+-spec download_file(Source::{Remote::string(), Node::atom()}, Dest::string())->
+    ok|{error, Reason::term()}.
+download_file(Source, Dest)->
+    copy_file(Dest, Source, download).
 
-copy_file(Local, Node, Remote, Type)->
+copy_file(Local, {Remote, Node}, Type)->
     {LocalMode, RemoteMode}=
     if
         Type=:=upload->{[read], [write, binary]};
@@ -89,21 +89,42 @@ read_remote_file(Arg={LocalDev, Channel, RemoteHandle})->
         eof->ok
     end.
 
+-spec get_work_path(Node::atom())->
+    {ok, Path::string()}|{error, Reason::term()}.
 get_work_path(Node)->
     case rpc:call(Node, file, get_cwd, [], ?RPC_TIMEOUT) of
         {ok, Path}->Path;
         {error, Reason}->error(Reason)
     end.
 
+-spec distribute(Resources::list({Path::string(), Name::string()}),
+                 Nodes::list(atom()))->
+    ok|{error, Reason::term()}.
 distribute(Resources, Nodes)->
-    Func=fun(Node)->
-                 CWD=get_work_path(Node),
-                 lists:foreach(
-                   fun({Path, File})->
-                           AbsPath=filename:join(CWD, Path),
-                           os:cmd("mkdir -p "++AbsPath),
-                           upload_file(filename:join(Path, File), Node,
-                                       filename:join(AbsPath, File))
-                   end, Resources)
-         end,
-    lists:foreach(Func, Nodes).
+    lists:foreach(
+      fun(Node)->
+              CWD=get_work_path(Node),
+              lists:foreach(
+                fun({Path, Name})->
+                        AbsPath=filename:join(CWD, Path),
+                        ?make_dir(Node, AbsPath),
+                        upload_file(filename:join(Path, Name),
+                                    {filename:join(AbsPath, Name), Node})
+                end, Resources)
+      end, Nodes).
+
+-spec get_resources(Resources::list({Path::string(), Name::string()}),
+                    Node::atom())->
+    ok|{error, Reason::term()}.
+get_resources(Resources, Node)->
+    get_resources(Resources, Node, get_work_path(Node)).
+
+get_resources([], _, _)->ok;
+get_resources([{Path, Name}|Tail], Node, CWD)->
+    AbsPath=filename:join(CWD, Path),
+    ?make_dir(node(), Path),
+    case download_file({filename:join(AbsPath, Name), Node},
+                       File=filename:join(Path, Name)) of
+        ok->get_resources(Tail, Node, CWD);
+        {error, Err}->{error, {File, Err}}
+    end.
