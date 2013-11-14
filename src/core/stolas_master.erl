@@ -110,6 +110,8 @@ handle_cast(Msg={worker_msg, _Type, _Process, _Detail},
     gen_server:cast({?task_id(Task, master), Leader}, Msg),
     {noreply, State};
 handle_cast({worker_msg, error, _Process, _Detail}, State)->
+    gen_server:cast(stolas_manager, {close_task, State#master_state.task,
+                                     force}),
     {noreply, State};
 handle_cast({worker_msg, ok, init, _WorkerName},
             State=#master_state{
