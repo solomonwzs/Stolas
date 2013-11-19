@@ -55,15 +55,26 @@
                            permanent, 5000, worker, [stolas_worker]
                           }
                   end, lists:seq(0, ThreadNum))).
--define(start_task(Node, Task, ChildSpecs),
+-define(start_task(Task, ChildSpecs),
         supervisor:start_child(
-          {stolas_sup, Node},
+          stolas_sup,
           {Task,
            {stolas_simple_sup, start_link, [Task, ChildSpecs]},
            permanent, infinity, supervisor, [stolas_simple_sup]})).
 -define(split_thread_alloc(LeaderNode, ThreadAlloc),
         {proplists:lookup(LeaderNode, ThreadAlloc),
          proplists:delete(LeaderNode, ThreadAlloc)}).
+-define(new_sub_task(Node, MasterId, ThreadNum, Mod, Workspace, Task,
+                     LeaderNode, Resources),
+        case gen_server:call({stolas_manager, Node},
+                             {new_sub_task, ThreadNum,
+                              Mod, Workspace, Task, LeaderNode, Resources}) of
+            ok->
+                gen_server:cast({MasterId, Node}, check_leader),
+                ok;
+            {error, R}->
+                R
+        end).
 
 start_link(RegName, Conf)->
     gen_server:start_link({local, RegName}, ?MODULE, [Conf], []).
@@ -107,18 +118,34 @@ handle_call(reload_config, _From, State=#manager_state{
     end;
 handle_call(get_state, _From, State)->
     {reply, {ok, State}, State};
+handle_call({new_sub_task, ThreadNum, Mod, Workspace, Task, LeaderNode,
+             Resources}, _From, State=#manager_state{
+                                         task_dict=TaskDict
+                                        })->
+    case ?dict_find(TaskDict, Task) of
+        {ok, _}->
+            {reply, {error, "already existed"}, State};
+        error->
+            case new_task(ThreadNum, Mod, Workspace, Task, LeaderNode,
+                          Resources) of
+                Err={error, _}->{reply, Err, State};
+                {ok, _, _}->
+                    NewTaskDict=?dict_add(TaskDict, Task, LeaderNode),
+                    {reply, ok, State#manager_state{
+                                  task_dict=NewTaskDict
+                                 }}
+            end
+    end;
 handle_call({new_task, Opt}, _From,
             State=#manager_state{
                      task_dict=TaskDict,
-                     config=Conf,
-                     master_node=MasterNode
-                    }) when MasterNode=:=node()->
+                     config=Conf
+                    })->
     Task=proplists:get_value(task, Opt),
     case ?dict_find(TaskDict, Task) of
         {ok, _}->
             {reply, {error, "already existed"}, State};
         error->
-            Task=proplists:get_value(task, Opt),
             Mod=proplists:get_value(mod, Opt),
             Workspace=proplists:get_value(workspace, Opt),
             LeaderNode=proplists:get_value(leader_node, Opt),
@@ -134,7 +161,7 @@ handle_call({new_task, Opt}, _From,
             case ?split_thread_alloc(LeaderNode, ValidAlloc) of
                 {none, _}->{reply, {error, "leader node not existed"}, State};
                 {{LeaderNode, LeaderThreadNum}, SubAlloc}->
-                    case new_task(LeaderNode, LeaderThreadNum, Mod, Workspace,
+                    case new_task(LeaderThreadNum, Mod, Workspace,
                                   Task, LeaderNode, Resources) of
                         Err={error, _}->
                             {reply, Err, State};
@@ -146,8 +173,9 @@ handle_call({new_task, Opt}, _From,
                                             {init, InitArgs, Acc}),
                             lists:foreach(
                               fun({N, T})->
-                                      new_task(N, T, Mod, Workspace, Task,
-                                               LeaderNode, Resources)
+                                      ?new_sub_task(N, MasterId, T, Mod,
+                                                    Workspace, Task,
+                                                    LeaderNode, Resources)
                               end, SubAlloc),
                             {reply, ok, State#manager_state{
                                           task_dict=NewTaskDict}}
@@ -234,12 +262,12 @@ cancel_conf(#manager_state{
     error_logger:delete_report_handler(stolas_log_handler),
     ok.
 
-new_task(Node, ThreadNum, Mod, Workspace, Task, LeaderNode, Resources)->
+new_task(ThreadNum, Mod, Workspace, Task, LeaderNode, Resources)->
     MasterId=?task_id(Task, master),
     MasterSpec=?master_spec(MasterId, ThreadNum, Mod, Workspace, Task,
                             LeaderNode, Resources),
     WorkerSpecs=?worker_specs(MasterId, ThreadNum, Mod, Workspace, Task),
-    case ?start_task(Node, Task, [MasterSpec|WorkerSpecs]) of
+    case ?start_task(Task, [MasterSpec|WorkerSpecs]) of
         {ok, Pid}->{ok, Pid, MasterId};
         Err={error, _}->Err
     end.

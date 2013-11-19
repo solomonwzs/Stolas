@@ -115,24 +115,18 @@ handle_cast(map, State=#worker_state{
     MainWorker=?task_main_worker(Master),
     case gen_server:call(MainWorker, {alloc, WorkerName}) of
         none->
-            %gen_server:cast(Master, {work_end, WorkerName});
-            ?send_msg_to_master(Master, 'end', map, WorkerName);
+            ?send_msg_to_master(Master, 'end', map, {WorkerName, node()});
         {ok, TaskArgs}->
             Mod=?task_mod(Master),
             try
                 Return=apply(Mod, map, [Workspace, TaskArgs]),
                 case Return of
                     {ok, Result}->
-                        %gen_server:cast(Master, {map_ok, {WorkerName, node()},
-                        %                         TaskArgs, Result}),
                         ?send_msg_to_master(Master, ok, map,
                                             {{WorkerName, node()}, TaskArgs,
                                              Result}),
                         gen_server:cast(self(), map);
                     {error, Reason}->
-                        %gen_server:cast(Master, {map_error,
-                        %                         {WorkerName, node()}, TaskArgs,
-                        %                         Reason})
                         ?send_msg_to_master(Master, error, map,
                                             {{WorkerName, node()}, TaskArgs,
                                              Reason})
@@ -141,8 +135,6 @@ handle_cast(map, State=#worker_state{
                                              TaskArgs, Return})
             catch
                 T:R->
-                    %gen_server:cast(Master, {map_error, {WorkerName, node()},
-                    %                         TaskArgs, {T, R}})
                     ?send_msg_to_master(Master, error, map,
                                         {{WorkerName, node()}, TaskArgs,
                                          {T, R}})
