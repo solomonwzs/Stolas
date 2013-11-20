@@ -19,7 +19,8 @@
     {ok, Result::term()}|{error, Reason::term()}.
 
 start(Opt)->
-    gen_server:call(stolas_manager, {new_task, Opt}).
+    LeaderNode=proplists:get_value(leader_node, Opt, node()),
+    gen_server:call({stolas_manager, LeaderNode}, {new_task, Opt, LeaderNode}).
 
 stop(Task)->
     gen_server:call(stolas_manager, {close_task, Task, force}).

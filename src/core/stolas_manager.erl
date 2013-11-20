@@ -136,7 +136,7 @@ handle_call({new_sub_task, ThreadNum, Mod, Workspace, Task, LeaderNode,
                                  }}
             end
     end;
-handle_call({new_task, Opt}, _From,
+handle_call({new_task, Opt, LeaderNode}, _From,
             State=#manager_state{
                      task_dict=TaskDict,
                      config=Conf
@@ -148,7 +148,6 @@ handle_call({new_task, Opt}, _From,
         error->
             Mod=proplists:get_value(mod, Opt),
             Workspace=proplists:get_value(workspace, Opt),
-            LeaderNode=proplists:get_value(leader_node, Opt),
             Resources=proplists:get_value(resources, Opt),
 
             file:make_dir(filename:join(Workspace, "log")),
@@ -193,28 +192,21 @@ handle_cast(sync_state, State=#manager_state{
                  _->State
              end,
     {noreply, NewState};
-handle_cast({close_task, Task, Res}, State=#manager_state{
-                                              task_dict=TaskDict
-                                             })->
+handle_cast({close_task, Task, Reason}, State=#manager_state{
+                                                 task_dict=TaskDict
+                                                })->
     case ?dict_find(TaskDict, Task) of
         {ok, _LeaderNode}->
             supervisor:terminate_child(stolas_sup, Task),
             supervisor:delete_child(stolas_sup, Task),
-            if
-                Res=:=normal->
+            case Reason of
+                normal->
                     error_logger:info_msg("Task:~p completed", [Task]);
-                Res=:=force->
+                force->
                     error_logger:info_msg("Task:~p was closed forcibly",
                                           [Task]);
-                is_record(Res, task_failure_msg)->
-                    #task_failure_msg{
-                       worker=Worker,
-                       reason=Reason,
-                       msg=Msg
-                      }=Res,
-                    error_logger:error_msg(
-                      "Task:~p failed, worker:~p, reason:~p, msg:~p",
-                      [Task, Worker, Reason, Msg])
+                {error, Msg}->
+                    error_logger:error_msg("Task:~p error, ~s", [Task, Msg])
             end,
             {noreply, State#manager_state{
                         task_dict=?dict_del(TaskDict, Task)}};

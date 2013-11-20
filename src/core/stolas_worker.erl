@@ -1,8 +1,6 @@
 -module(stolas_worker).
 -behaviour(gen_server).
 
--include("stolas.hrl").
-
 -export([start_link/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          code_change/3, terminate/2]).
@@ -17,11 +15,7 @@
 -define(task_mod(Master), gen_server:call(Master, get_mod)).
 -define(task_main_worker(Master), gen_server:call(Master, get_main_worker)).
 -define(send_msg_to_master(Master, Type, Process, Detail),
-        gen_server:cast(Master, #worker_msg{
-                                   type=Type,
-                                   process=Process,
-                                   detail=Detail
-                                  })).
+        gen_server:cast(Master, {worker_msg, Type, Process, Detail})).
 
 start_link(RegName, Opt)->
     gen_server:start_link({local, RegName}, ?MODULE, [RegName, Opt], []).
@@ -38,26 +32,26 @@ init([RegName, Opt])->
             acc=undefined
            }}.
 
-handle_call({alloc, WorkerName}, {Pid, _}, State=#worker_state{
-                                           master=Master
+handle_call({alloc, PWorkerName}, {Pid, _}, State=#worker_state{
+                                           master=Master,
+                                           name=EWorkerName
                                           })->
+    Node=node(Pid),
     try
-        Node=node(Pid),
         Task=apply(?task_mod(Master), alloc, [Node]),
         case Task of
             none->
-                %gen_server:cast(Master, alloc_end);
                 ?send_msg_to_master(Master, 'end', alloc, null);
             {ok, Args}->
-                %gen_server:cast(Master, {new_alloc, WorkerName, Node, Args})
-                ?send_msg_to_master(Master, ok, alloc, {WorkerName, Node,
+                ?send_msg_to_master(Master, ok, alloc, {PWorkerName, Node,
                                                         Args})
         end,
         {reply, Task, State}
     catch
         T:R->
-            %gen_server:cast(Master, {alloc_error, WorkerName, {T, R}}),
-            ?send_msg_to_master(Master, error, alloc, {WorkerName, {T, R}}),
+            ?send_msg_to_master(Master, error, alloc, {{EWorkerName, node()},
+                                                       {PWorkerName, Node},
+                                                       {T, R}}),
             {reply, {error, {T, R}}, State}
     end;
 handle_call(_Msg, _From, State)->
@@ -71,16 +65,15 @@ handle_cast({init, Mod, InitArgs, Acc}, State=#worker_state{
     try
         case apply(Mod, init, [Workspace, InitArgs]) of
             ok->
-                %{init_ok, WorkerName};
                 ?send_msg_to_master(Master, ok, init, WorkerName);
             {error, Reason}->
-                %{init_error, WorkerName, Reason}
-                ?send_msg_to_master(Master, error, init, {WorkerName, Reason})
+                ?send_msg_to_master(Master, error, init, {{WorkerName, node()},
+                                                          Reason})
         end
     catch
         T:R->
-            %{init_error, WorkerName, {T, R}}
-            ?send_msg_to_master(Master, error, init, {WorkerName, {T, R}})
+            ?send_msg_to_master(Master, error, init, {{WorkerName, node()},
+                                                      {T, R}})
     end,
     {noreply, State#worker_state{acc=Acc}};
 handle_cast({reduce, Mod}, State=#worker_state{
@@ -92,19 +85,16 @@ handle_cast({reduce, Mod}, State=#worker_state{
     try
         case apply(Mod, reduce, [Workspace, Acc]) of
             {ok, Result}->
-                %{reduce_ok, WorkerName, Result};
                 ?send_msg_to_master(Master, ok, reduce,
                                     {WorkerName, Result});
             {error, Reason}->
-                %{reduce_error, WorkerName, Reason}
                 ?send_msg_to_master(Master, error, reduce,
-                                    {WorkerName, Reason})
+                                    {{WorkerName, node()}, Reason})
         end
     catch
         T:R->
-            %{reduce_error, WorkerName, {T, R}}
             ?send_msg_to_master(Master, error, reduce,
-                                {WorkerName, {T, R}})
+                                {{WorkerName, node()}, {T, R}})
     end,
     {noreply, State};
 handle_cast(map, State=#worker_state{
@@ -142,29 +132,36 @@ handle_cast(map, State=#worker_state{
         {error, _Reason}->ok
     end,
     {noreply, State};
-handle_cast({accumulate, WorkerName, Node, TaskArgs, Return},
+handle_cast({accumulate, PWorkerName, Node, TaskArgs, Return},
             State=#worker_state{
                      master=Master,
                      workspace=Workspace,
+                     name=EWorkerName,
                      acc=Acc
                     })->
     Mod=?task_mod(Master),
     NewAcc=try
-               case apply(Mod, accumulate, [Workspace, Acc, WorkerName, Node,
+               case apply(Mod, accumulate, [Workspace, Acc, PWorkerName, Node,
                                             TaskArgs, Return]) of
                    {ok, NA}->
                        ?send_msg_to_master(Master, ok, accumulate,
-                                           {WorkerName, Node}),
+                                           {PWorkerName, Node}),
                        NA;
                    {error, Reason}->
                        ?send_msg_to_master(Master, error, accumulate,
-                                           {WorkerName, Node, Reason}),
+                                           {{EWorkerName, node()},
+                                            {PWorkerName, Node},
+                                            Return,
+                                            Reason}),
                        Acc
                end
            catch
                T:R->
                    ?send_msg_to_master(Master, error, accumulate,
-                                       {WorkerName, Node, {T, R}}),
+                                       {{EWorkerName, node()},
+                                        {PWorkerName, Node},
+                                        Return,
+                                        {T, R}}),
                    Acc
            end,
     {noreply, State#worker_state{acc=NewAcc}};

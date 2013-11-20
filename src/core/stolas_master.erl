@@ -14,8 +14,8 @@
 -define(main_worker(Task), ?task_id(Task, 0)).
 -define(alloc_task_dict_name(Task),
         list_to_atom(lists:concat(["stolas_master:alloc_task:", Task]))).
--define(close_task(Task, Type),
-        gen_server:cast(stolas_manager, {close_task, Task, Type})).
+-define(close_task(Task, Reason),
+        gen_server:cast(stolas_manager, {close_task, Task, Reason})).
 
 -record(master_state, {
           task::atom(),
@@ -81,20 +81,24 @@ handle_cast(check_leader, State=#master_state{
                                    status=Status
                                   }) when Leader=/=node()->
     try
-        NewStatus=case {gen_server:call({?task_id(Task, master), Leader},
-                                        get_status),
-                        Status} of
-                      {init, idle}->
-                          idle;
-                      {map, idle}->
-                          stolas_file:get_resources(Resources, Leader),
-                          ?broadcast_workers_msg(Task, ThreadNum, map),
-                          map;
-                      {S, _}->S
-                  end,
+        NewStatus=
+        case {gen_server:call({?task_id(Task, master), Leader},
+                              get_status),
+              Status} of
+            {init, idle}->
+                idle;
+            {map, idle}->
+                stolas_file:get_resources(Resources, Leader),
+                ?broadcast_workers_msg(Task, ThreadNum, map),
+                map;
+            {S, _}->S
+        end,
         timer:apply_after(1000, gen_server, cast, [self(), check_leader]),
         {noreply, State#master_state{status=NewStatus}}
     catch
+        exit:{noproc, _}->
+            ?close_task(Task, normal),
+            {noreply, State};
         _:_->
             ?close_task(Task, force),
             {noreply, State}
@@ -118,9 +122,9 @@ handle_cast(Msg={worker_msg, _Type, _Process, _Detail},
                     }) when Leader=/=node()->
     gen_server:cast({?task_id(Task, master), Leader}, Msg),
     {noreply, State};
-handle_cast({worker_msg, error, _Process, _Detail}, State)->
-    io:format("~p~n", [{_Process, _Detail}]),
-    ?close_task(State#master_state.task, force),
+handle_cast({worker_msg, error, Process, Detail}, State)->
+    ?close_task(State#master_state.task,
+                {error, stolas_msg:process_worker_err_msg(Process, Detail)}),
     {noreply, State};
 handle_cast({worker_msg, ok, init, _WorkerName},
             State=#master_state{

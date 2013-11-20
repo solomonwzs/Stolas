@@ -1,19 +1,6 @@
 -ifndef(STOLAS_INCLUDED).
 -define(STOLAS_INCLUDED, 1).
 
--record(task_failure_msg, {
-          worker::{atom(), atom()},
-          mfc::{atom(), atom(), list()},
-          reason::atom(),
-          msg::term()
-         }).
-
--record(worker_msg, {
-          type::ok|error|'end',
-          process::init|alloc|map|accumulate|reduce,
-          detail::term()
-         }).
-
 -define(dict_new(Name), dict:new()).
 -define(dict_add(Dict, Key, Value), dict:store(Key, Value, Dict)).
 -define(dict_del(Dict, Key), dict:erase(Key, Dict)).
