@@ -76,8 +76,10 @@
                 R
         end).
 
+
 start_link(RegName, Conf)->
     gen_server:start_link({local, RegName}, ?MODULE, [Conf], []).
+
 
 init([Conf])->
     process_flag(trap_exit, true),
@@ -88,6 +90,7 @@ init([Conf])->
             master_node=MasterNode,
             config=Conf
            }}.
+
 
 handle_call(get_config, _From, State=#manager_state{
                                         master_node=MasterNode,
@@ -184,6 +187,7 @@ handle_call({new_task, Opt, LeaderNode}, _From,
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
+
 handle_cast(sync_state, State=#manager_state{
                                  master_node=MasterNode
                                 }) when MasterNode=/=node()->
@@ -201,12 +205,17 @@ handle_cast({close_task, Task, Reason}, State=#manager_state{
             supervisor:delete_child(stolas_sup, Task),
             case Reason of
                 normal->
-                    error_logger:info_msg("Task:~p completed", [Task]);
+                    error_logger:info_report([{task, Task},
+                                              {msg, "completed"}
+                                             ]);
                 force->
-                    error_logger:info_msg("Task:~p was closed forcibly",
-                                          [Task]);
+                    error_logger:info_report([{task, Task},
+                                              {msg, "closed forcibly"}
+                                             ]);
                 {error, Msg}->
-                    error_logger:error_msg("Task:~p error, ~s", [Task, Msg])
+                    error_logger:info_report([{task, Task},
+                                              {error, Msg}
+                                             ])
             end,
             {noreply, State#manager_state{
                         task_dict=?dict_del(TaskDict, Task)}};
@@ -216,17 +225,21 @@ handle_cast({close_task, Task, Reason}, State=#manager_state{
 handle_cast(_Msg, State)->
     {noreply, State}.
 
+
 handle_info(_Msg, State)->
     {noreply, State}.
 
+
 code_change(_Vsn, State, _Extra)->
     {ok, State}.
+
 
 terminate(_Reason, #manager_state{
                              ping_tref=PingTref
                             })->
     timer:cancel(PingTref),
     ok.
+
 
 process_conf(Conf)->
     Nodes=proplists:get_value(nodes, Conf, [node()]),
@@ -237,13 +250,14 @@ process_conf(Conf)->
         _->ssh:stop()
     end,
     case proplists:get_value(readable_file_log, Conf) of
-        LogPath when is_list(LogPath)->
-            error_logger:add_report_handler(stolas_log_handler, [LogPath]);
+        RLogConf when is_list(RLogConf)->
+            error_logger:add_report_handler(stolas_log_handler, [RLogConf]);
         _->ok
     end,
     MasterNode=proplists:get_value(master_node, Conf),
                  
     {PingTref, MasterNode}.
+
 
 cancel_conf(#manager_state{
                task_dict=_TaskDict,
@@ -253,6 +267,7 @@ cancel_conf(#manager_state{
     ?dict_drop(_TaskDict),
     error_logger:delete_report_handler(stolas_log_handler),
     ok.
+
 
 new_task(ThreadNum, Mod, Workspace, Task, LeaderNode, Resources)->
     MasterId=?task_id(Task, master),

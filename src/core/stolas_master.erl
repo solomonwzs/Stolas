@@ -30,8 +30,10 @@
           status::init|map|reduce|idle|interrupt|completed
          }).
 
+
 start_link(RegName, Opt)->
     gen_server:start_link({local, RegName}, ?MODULE, [Opt], []).
+
 
 init([Opt])->
     process_flag(trap_exit, true),
@@ -61,6 +63,7 @@ init([Opt])->
                    }}
     end.
 
+
 handle_call(get_main_worker, _From, State=#master_state{
                                              leader=Leader,
                                              task=Task
@@ -72,6 +75,7 @@ handle_call(get_status, _From, State)->
     {reply, State#master_state.status, State};
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
+
 
 handle_cast(check_leader, State=#master_state{
                                    task=Task,
@@ -133,7 +137,9 @@ handle_cast({worker_msg, ok, init, _WorkerName},
                      thread_num=ThreadNum,
                      status=init
                     }) when Leader=:=node()->
-    error_logger:info_msg("Task:~p init ok", [Task]),
+    error_logger:info_report([{task, Task},
+                              {msg, "init ok"}
+                             ]),
     ?broadcast_workers_msg(Task, ThreadNum, map),
     {noreply, State#master_state{status=map}};
 handle_cast({worker_msg, ok, alloc, {WorkerName, Node, Args}},
@@ -154,7 +160,9 @@ handle_cast({worker_msg, 'end', alloc, null},
                      alloc_end=false,
                      status=map
                     }) when Leader=:=node()->
-    error_logger:info_msg("Task:~p alloc end", [Task]),
+    error_logger:info_report([{task, Task},
+                              {msg, "alloc end"}
+                             ]),
     {noreply, State#master_state{alloc_end=true}};
 handle_cast({worker_msg, ok, map, {Name, TaskArgs, Result}},
             State=#master_state{
@@ -164,7 +172,10 @@ handle_cast({worker_msg, ok, map, {Name, TaskArgs, Result}},
                      work_results_log=WorkResultLog,
                      status=map
                     }) when Leader=:=node()->
-    error_logger:info_msg("Task:~p map ok. worker:~p", [Task, Name]),
+    error_logger:info_report([{task, Task},
+                              {msg, "map ok"},
+                              {worker, Name}
+                             ]),
     NewAllocTaskDict=?dict_del(AllocTaskDict, Name),
     disk_log:blog(WorkResultLog, term_to_binary({Name, TaskArgs, Result})),
     {noreply, State#master_state{alloc_task_dict=NewAllocTaskDict}};
@@ -183,7 +194,10 @@ handle_cast({worker_msg, 'end', map, Name},
                      alloc_task_dict=AllocTaskDict,
                      status=map
                     })->
-    error_logger:info_msg("Task:~p map end, worker:~p", [Task, Name]),
+    error_logger:info_report([{task, Task},
+                              {msg, "map end"},
+                              {worker, Name}
+                             ]),
     NewStatus=case ?dict_size(AllocTaskDict) of
                   0->
                       gen_server:cast(?main_worker(Task), {reduce, Mod}),
@@ -197,17 +211,22 @@ handle_cast({worker_msg, ok, reduce, {_WorkerName, _Result}},
                      leader=Leader,
                      status=reduce
                     }) when Leader=:=node()->
-    error_logger:info_msg("Task:~p reduce ok", [Task]),
+    error_logger:info_report([{task, Task},
+                              {msg, "reduce ok"}
+                             ]),
     ?close_task(Task, normal),
     {noreply, State#master_state{status=completed}};
 handle_cast(_Msg, State)->
     {noreply, State}.
 
+
 handle_info(_Msg, State)->
     {noreply, State}.
 
+
 code_change(_Vsn, State, _Extra)->
     {ok, State}.
+
 
 terminate(_Reason, #master_state{
                       alloc_task_dict=_AllocTaskDict,
