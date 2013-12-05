@@ -18,9 +18,11 @@
 -callback reduce(Workspace::string(), Acc::term())->
     {ok, Result::term()}|{error, Reason::term()}.
 
+
 start(Opt)->
     LeaderNode=proplists:get_value(leader_node, Opt, node()),
     gen_server:call({stolas_manager, LeaderNode}, {new_task, Opt, LeaderNode}).
+
 
 stop(Task)->
     gen_server:call(stolas_manager, {close_task, Task, force}).

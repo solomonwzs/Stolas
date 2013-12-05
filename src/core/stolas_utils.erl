@@ -27,7 +27,7 @@ is_string([H|T]) when is_integer(H) andalso H>=0 andalso H=<255->
 is_string(_)->false.
 
 
-is_proplist([])->true;
+is_proplist([{K, _}]) when is_atom(K)->true;
 is_proplist([{K, _}|T]) when is_atom(K) orelse is_list(K)->
     is_proplist(T);
 is_proplist(_)->false.
