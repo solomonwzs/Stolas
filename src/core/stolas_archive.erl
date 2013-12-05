@@ -11,7 +11,10 @@
           task_dict::tuple(),
           ping_tref::term(),
           master_node::atom(),
-          config::list(tuple())
+          config::list(tuple()),
+          last_syne_time::{integer(), integer(), integer()}|nil,
+          status::wait_master|ok|no_master,
+          role::master|sub
          }).
 
 -define(PING_INTERVAL, 1500).
@@ -30,19 +33,66 @@ start_link(RegName, Conf)->
 
 init([Conf])->
     process_flag(trap_exit, true),
-    {PingTref, MasterNode}=process_conf(Conf),
-    {ok, #archive{
-            task_dict=?dict_new('stolas:task_dict'),
-            ping_tref=PingTref,
-            master_node=MasterNode,
-            config=Conf
-           }}.
+    case proplists:lookup(master_node, Conf) of
+        none->{stop, "master node was not define"};
+        {master, MasterNode}->
+            Nodes=proplists:get_value(nodes, Conf, [node()]),
+            {ok, PingTref}=?ping_tref(Nodes),
+
+            case proplists:get_value(ssh_files_transport, Conf, false) of
+                false->ssh:stop();
+                true->ssh:start()
+            end,
+
+            if
+                MasterNode=:=node()->
+                    {ok, #archive{
+                            task_dict=?dict_new('stolas:task_dict'),
+                            ping_tref=PingTref,
+                            master_node=MasterNode,
+                            config=Conf,
+                            last_syne_time=nil,
+                            status=ok,
+                            role=master
+                           }};
+                true->
+                    gen_server:cast(self(), wait_master),
+                    {ok, #archive{
+                            last_syne_time={0, 0, 0},
+                            status=wait_master,
+                            role=sub
+                           }}
+            end
+    end.
 
 
 handle_call(_Msg, _From, Archive)->
     {reply, {error, "error message"}, Archive}.
 
 
+handle_cast(wait_master, Archive=#archive{
+                                    master_node=MasterNode,
+                                    status=wait_master
+                                   }) when MasterNode=/=node()->
+    try
+        {Timestamp, #archive{
+                       task_dict=TaskDict,
+                       config=Conf
+                      }}=
+        gen_server:call(get_master_archive, {stolas_archive, MasterNode}),
+        {noreply, Archive#archive{
+                    task_dict=TaskDict,
+                    config=Conf,
+                    last_syne_time=Timestamp,
+                    status=ok
+                   }}
+    catch
+        exit:{noproc, _}->
+            timer:apply_after(1000, gen_server, cast, [self(), wait_master]),
+            {noreply, Archive};
+        _:_->
+            {noreply, Archive#archive{status=no_master}}
+    end;
 handle_cast(_Msg, Archive)->
     {noreply, Archive}.
 
@@ -60,21 +110,3 @@ terminate(_Reason, #archive{
                      })->
     timer:cancel(PingTref),
     ok.
-
-
-process_conf(Conf)->
-    Nodes=proplists:get_value(nodes, Conf, [node()]),
-    {ok, PingTref}=?ping_tref(Nodes),
-
-    case proplists:get_value(ssh_files_transport, Conf, false) of
-        true->ssh:start();
-        _->ssh:stop()
-    end,
-    case proplists:get_value(readable_file_log, Conf) of
-        RLogConf when is_list(RLogConf)->
-            error_logger:add_report_handler(stolas_log_handler, [RLogConf]);
-        _->ok
-    end,
-    MasterNode=proplists:get_value(master_node, Conf),
-
-    {PingTref, MasterNode}.
