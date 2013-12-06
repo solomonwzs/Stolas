@@ -9,9 +9,9 @@
 
 -record(archive, {
           task_dict::tuple(),
+          config::list(tuple()),
           ping_tref::term(),
           master_node::atom(),
-          config::list(tuple()),
           last_syne_time::{integer(), integer(), integer()}|nil,
           status::wait_master|ok|no_master,
           role::master|sub
@@ -65,7 +65,29 @@ init([Conf])->
             end
     end.
 
-
+handle_call(get_archive, _From, Archive=#archive{
+                                           master_node=MasterNode,
+                                           status=ok
+                                          })->
+    if
+        MasterNode=:=node()->Archive;
+        true->
+            case sync_archive(Archive) of
+                Reply={ok, NewArchive}->{reply, Reply, NewArchive};
+                error->{reply, error, Archive}
+            end
+    end;
+handle_call(get_master_archive, _From, Archive=#archive{
+                                                  master_node=MasterNode,
+                                                  status=ok
+                                                 }) when MasterNode=:=node()->
+    {reply, {ok, now(), Archive}, Archive};
+handle_call(get_master_archive, _From, Archive=#archive{
+                                                  master_node=MasterNode,
+                                                  status=ok,
+                                                  last_syne_time=LastSyncTime
+                                                 }) when MasterNode=/=node()->
+    {reply, {master_change, LastSyncTime, MasterNode}, Archive};
 handle_call(_Msg, _From, Archive)->
     {reply, {error, "error message"}, Archive}.
 
@@ -74,24 +96,26 @@ handle_cast(wait_master, Archive=#archive{
                                     master_node=MasterNode,
                                     status=wait_master
                                    }) when MasterNode=/=node()->
-    try
-        {Timestamp, #archive{
-                       task_dict=TaskDict,
-                       config=Conf
-                      }}=
-        gen_server:call(get_master_archive, {stolas_archive, MasterNode}),
-        {noreply, Archive#archive{
-                    task_dict=TaskDict,
-                    config=Conf,
-                    last_syne_time=Timestamp,
-                    status=ok
-                   }}
-    catch
-        exit:{noproc, _}->
+    case get_master_archive(MasterNode) of
+        {ok, Timestamp, #archive{
+                           task_dict=TaskDict,
+                           config=Conf
+                          }}->
+            {noreply, Archive#archive{
+                        task_dict=TaskDict,
+                        config=Conf,
+                        last_syne_time=Timestamp,
+                        status=ok
+                       }};
+        {error, Reason} when Reason=:=noreply orelse Reason=:=timeout->
             timer:apply_after(1000, gen_server, cast, [self(), wait_master]),
             {noreply, Archive};
-        _:_->
-            {noreply, Archive#archive{status=no_master}}
+        {master_change, _, NewMasterNode}->
+            gen_server:cast(self(), wait_master),
+            {noreply, Archive#archive{
+                        master_node=NewMasterNode
+                       }};
+        _->{noreply, Archive#archive{status=no_master}}
     end;
 handle_cast(_Msg, Archive)->
     {noreply, Archive}.
@@ -110,3 +134,35 @@ terminate(_Reason, #archive{
                      })->
     timer:cancel(PingTref),
     ok.
+
+
+get_master_archive(MasterNode)->
+    try
+        gen_server:call(get_master_archive, {stolas_archive, MasterNode}, 1000)
+    catch
+        exit:{noreply, _}->{error, noreply};
+        exit:{timeout, _}->{error, timeout};
+        _:_->{error, unexpected}
+    end.
+
+sync_archive(Archive=#archive{
+                        master_node=MasterNode
+                       })->
+    if
+        MasterNode=:=node()->Archive;
+        true->
+            case get_master_archive(MasterNode) of
+                {ok, Timestamp, #archive{
+                                   task_dict=TaskDict,
+                                   config=Conf
+                                  }}->
+                    {ok, Archive#archive{
+                           task_dict=TaskDict,
+                           config=Conf,
+                           last_syne_time=Timestamp
+                          }};
+                {master_change, _, NewMasterNode}->
+                    sync_archive(Archive#archive{master_node=NewMasterNode});
+                {error, _}->error
+            end
+    end.
