@@ -3,6 +3,7 @@
 
 -export([init/1, handle_event/2, handle_call/2, handle_info/2, terminate/2,
          code_change/3]).
+-export([format/2]).
 
 -define(date_now, stolas_utils:readable_datetime(calendar:local_time())).
 
@@ -23,7 +24,7 @@ init([RLogConf])->
 handle_event({Type, _Gleader, {_Pid, Format, Data}}, State)
   when Type=:=error orelse Type=:=waring_msg orelse Type=:=info_msg->
     file:write(State#handler_state.log_dev,
-               io_lib:format("~s [~p] "++Format++"~n", [?date_now, Type|Data])),
+               format("~s [~p] "++Format++"~n", [?date_now, Type|Data])),
     {ok, State};
 handle_event({Type, _Gleader, {_Pid, _, Data}}, State=#handler_state{
                                                          log_dev=LogDev,
@@ -38,7 +39,7 @@ handle_event({Type, _Gleader, {_Pid, _, Data}}, State=#handler_state{
                                       stolas_utils:json_encode(Data)]));
         true->
             file:write(LogDev,
-                       io_lib:format("~s [~p] ~p~n", [?date_now, Type, Data]))
+                       format("~s [~p] ~p~n", [?date_now, Type, Data]))
     end,
     {ok, State}.
 
@@ -58,3 +59,51 @@ terminate(_Reason, State)->
 
 code_change(_Vsn, State, _Extra)->
     {ok, State}.
+
+
+-define(list_element_format(List),
+        case lists:foldr(fun(X, Acc)->
+                                 [$,, term_format(X)|Acc]
+                         end, [], List) of
+            []->[];
+            R->tl(R)
+        end).
+term_format(Term) when is_list(Term)->
+    case io_lib:printable_latin1_list(Term) of
+        true->io_lib:format("\"~s\"", [Term]);
+        false->
+            [$[, ?list_element_format(Term), $]]
+    end;
+term_format(Term) when is_tuple(Term)->
+    [${, ?list_element_format(tuple_to_list(Term)), $}];
+term_format(Term)->
+    io_lib:format("~p", [Term]).
+
+
+term_format(CS, Term)->
+    case lists:last(CS) of
+        $p->term_format(Term);
+        _->io_lib:format(CS, [Term])
+    end.
+
+
+get_cs([H|T], CS)->
+    case lists:member(H, [$c, $f, $e, $g, $s, $w, $p, $W, $P, $B, $X, $#, $b,
+                          $x, $+, $n, $i]) of
+        true->{lists:reverse([H|CS]), T};
+        false->get_cs(T, [H|CS])
+    end.
+
+
+format([], _)->
+    [];
+format([$~|FTail1], TermList)->
+    {CS, FTail2}=get_cs(FTail1, [$~]),
+    if
+        CS=:="~n"->[$\n, format(FTail2, TermList)];
+        true->
+            [Term|TTail]=TermList,
+            [term_format(CS, Term)|format(FTail2, TTail)]
+    end;
+format([F|FTail], TermList)->
+    [F|format(FTail, TermList)].

@@ -1,3 +1,4 @@
+# vim: noet:
 PREFIX:=../
 DEST:=$(PREFIX)$(PROJECT)
 

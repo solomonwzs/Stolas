@@ -145,11 +145,12 @@ get_master_archive(MasterNode)->
         _:_->{error, unexpected}
     end.
 
+
 sync_archive(Archive=#archive{
                         master_node=MasterNode
                        })->
     if
-        MasterNode=:=node()->Archive;
+        MasterNode=:=node()->{ok, Archive};
         true->
             case get_master_archive(MasterNode) of
                 {ok, Timestamp, #archive{
