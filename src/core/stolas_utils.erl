@@ -46,6 +46,8 @@ is_proplist(_)->false.
                               $:, (json_encode(Value))/bitstring>>
                     end,
                     <<>>, Proplist)))/bitstring, $}>>).
+json_encode(T) when T=:=null orelse T=:=true orelse T=:=false->
+    <<(atom_to_binary(T, utf8))/bitstring>>;
 json_encode(T) when is_atom(T)->
     <<$", (atom_to_binary(T, utf8))/bitstring, $">>;
 json_encode(T) when is_integer(T)->
