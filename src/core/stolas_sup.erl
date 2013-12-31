@@ -43,11 +43,15 @@ upgrade() ->
 init([]) ->
     Web = web_specs(stolas_web, 8080),
     {ok, Conf}=stolas_utils:get_config(default),
+    Archive={
+      stolas_archive,
+      {stolas_archive, start_link, [stolas_archive, Conf]},
+      permanent, 5000, worker, [stolas_archive]},
     Manager={
       stolas_manager,
       {stolas_manager, start_link, [stolas_manager, Conf]},
-      permanent, 5000, worker, [stolas_server]},
-    Processes = [Web, Manager],
+      permanent, 5000, worker, [stolas_manager]},
+    Processes = [Web, Archive, Manager],
     Strategy = {one_for_one, 10, 10},
     {ok,
      {Strategy, lists:flatten(Processes)}}.

@@ -4,6 +4,8 @@ DEST:=$(PREFIX)$(PROJECT)
 
 REBAR=./rebar
 
+DEPSOLVER_PLT=./.depsolver_plt
+
 .PHONY: all edoc test clean build_plt dialyzer app
 
 all:
@@ -23,9 +25,18 @@ clean:
 build_plt:
 	@$(REBAR) build-plt
 
-dialyzer:
-	@$(REBAR) dialyze
+#dialyzer:
+#	@$(REBAR) dialyze
 
 app:
 	@$(REBAR) create template=mochiwebapp dest=$(DEST) appid=$(PROJECT)
 
+$(DEPSOLVER_PLT):
+	@dialyzer --output_plt $@ --build_plt \
+		--apps erts kernel stdlib crypto ssh mnesia -r deps
+
+dialyzer:$(DEPSOLVER_PLT)
+	@dialyzer --plt $^ ./ebin/*.beam
+
+typer:$(DEPSOLVER_PLT)
+	@typer --plt $^ -r ./src -I ./include

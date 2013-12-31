@@ -7,16 +7,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          code_change/3, terminate/2]).
 
--record(archive, {
-          task_dict::tuple(),
-          config::list(tuple()),
-          ping_tref::term(),
-          master_node::atom(),
-          last_syne_time::{integer(), integer(), integer()}|nil,
-          status::wait_master|ok|no_master,
-          role::master|sub
-         }).
-
 -define(PING_INTERVAL, 1500).
 
 -define(ping_tref(Nodes),
@@ -25,7 +15,11 @@
           lists, foreach, [fun(Node)->
                                    net_adm:ping(Node)
                            end, Nodes])).
-
+-define(not_lock(Lock), (Lock=:=nil)).
+-define(not_wirte_lock(Lock),
+        (not (Lock=/=nil andalso element(2, Lock)=:=write))).
+-define(match_lock(Lock, Pid, Type),
+        (Lock=:={Pid, Type})).
 
 start_link(RegName, Conf)->
     gen_server:start_link({local, RegName}, ?MODULE, [Conf], []).
@@ -34,8 +28,8 @@ start_link(RegName, Conf)->
 init([Conf])->
     process_flag(trap_exit, true),
     case proplists:lookup(master_node, Conf) of
-        none->{stop, "master node was not define"};
-        {master, MasterNode}->
+        none->{stop, "master node was not defined"};
+        {master_node, MasterNode}->
             Nodes=proplists:get_value(nodes, Conf, [node()]),
             {ok, PingTref}=?ping_tref(Nodes),
 
@@ -44,37 +38,75 @@ init([Conf])->
                 true->ssh:start()
             end,
 
-            if
-                MasterNode=:=node()->
-                    {ok, #archive{
-                            task_dict=?dict_new('stolas:task_dict'),
-                            ping_tref=PingTref,
-                            master_node=MasterNode,
-                            config=Conf,
-                            last_syne_time=nil,
-                            status=ok,
-                            role=master
-                           }};
-                true->
-                    gen_server:cast(self(), wait_master),
-                    {ok, #archive{
-                            last_syne_time={0, 0, 0},
-                            status=wait_master,
-                            role=sub
-                           }}
-            end
+            Archive=if
+                        MasterNode=:=node()->
+                            #archive{
+                               task_dict=?dict_new('stolas:task_dict'),
+                               ping_tref=PingTref,
+                               master_node=MasterNode,
+                               config=Conf,
+                               last_syne_time=nil,
+                               status=ok,
+                               role=master
+                              };
+                        true->
+                            gen_server:cast(self(), wait_master),
+                            #archive{
+                               last_syne_time={0, 0, 0},
+                               status=wait_master,
+                               role=sub
+                              }
+                    end,
+            {ok, Archive#archive{
+                   lock=nil
+                  }}
     end.
 
+handle_call(Msg={get_archive, Pid, write}, _From,
+            Archive=#archive{
+                       master_node=MasterNode,
+                       status=ok,
+                       lock=Lock
+                      })->
+    if
+        MasterNode=:=node() andalso ?not_lock(Lock)->
+            NewArchive=Archive#archive{lock={Pid, write}},
+            {reply, {ok, NewArchive}, NewArchive};
+        MasterNode=/=node()->
+            case gen_server:call({stolas_archive, MasterNode}, Msg) of
+                OK={ok, NewArchive}->
+                    {reply, OK, NewArchive};
+                Err={error, _}->
+                    {reply, Err, Archive}
+            end;
+        true->{reply, {error, lock}, Archive}
+    end;
+handle_call(Msg={set_archive, NewArchive, Pid, write}, _From,
+            Archive=#archive{
+                       master_node=MasterNode,
+                       status=ok,
+                       lock=Lock
+                      })->
+    if
+        MasterNode=:=node() andalso ?match_lock(Lock, Pid, write)->
+            {reply, ok, NewArchive#archive{lock=nil}};
+        MasterNode=/=node()->
+            case gen_server:call({stolas_archive, MasterNode}, Msg) of
+                ok->{reply, ok, NewArchive#archive{last_syne_time=now()}};
+                Err={error, _}->{reply, Err, Archive}
+            end;
+        true->{reply, {error, lock_not_match}, Archive}
+    end;
 handle_call(get_archive, _From, Archive=#archive{
                                            master_node=MasterNode,
                                            status=ok
                                           })->
     if
-        MasterNode=:=node()->Archive;
+        MasterNode=:=node()->{reply, {ok, Archive}, Archive};
         true->
             case sync_archive(Archive) of
                 Reply={ok, NewArchive}->{reply, Reply, NewArchive};
-                error->{reply, error, Archive}
+                Err={error, _}->{reply, Err, Archive}
             end
     end;
 handle_call(get_master_archive, _From, Archive=#archive{
@@ -164,6 +196,6 @@ sync_archive(Archive=#archive{
                           }};
                 {master_change, _, NewMasterNode}->
                     sync_archive(Archive#archive{master_node=NewMasterNode});
-                {error, _}->error
+                Err={error, _}->Err
             end
     end.

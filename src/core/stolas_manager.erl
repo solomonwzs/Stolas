@@ -8,7 +8,7 @@
          code_change/3, terminate/2]).
 
 -record(manager_state, {
-          task_dict::tuple(),
+          task_dict::dict(),
           ping_tref::term(),
           master_node::atom(),
           config::list(tuple())
@@ -109,9 +109,9 @@ handle_call(reload_config, _From, State=#manager_state{
                                           }) when MasterNode=:=node()->
     case ?dict_size(TaskDict) of
         0->
-            NewConf=stolas_utils:get_value(default),
+            {ok, NewConf}=stolas_utils:get_config(default),
             cancel_conf(State),
-            {NewPingTref}=process_conf(NewConf),
+            {NewPingTref, _}=process_conf(NewConf),
             NewState=State#manager_state{
                        config=NewConf,
                        ping_tref=NewPingTref
@@ -263,7 +263,7 @@ cancel_conf(#manager_state{
                task_dict=_TaskDict,
                ping_tref=PingTref
               })->
-    timer:cancel_conf(PingTref),
+    timer:cancel(PingTref),
     ?dict_drop(_TaskDict),
     error_logger:delete_report_handler(stolas_log_handler),
     ok.

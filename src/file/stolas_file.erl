@@ -103,7 +103,7 @@ get_work_path(Node)->
 distribute(Resources, Nodes)->
     lists:foreach(
       fun(Node)->
-              CWD=get_work_path(Node),
+              {ok, CWD}=get_work_path(Node),
               lists:foreach(
                 fun({Path, Name})->
                         AbsPath=filename:join(CWD, Path),
@@ -117,7 +117,8 @@ distribute(Resources, Nodes)->
                     Node::atom())->
     ok|{error, Reason::term()}.
 get_resources(Resources, Node)->
-    get_resources(Resources, Node, get_work_path(Node)).
+    {ok, CWD}=get_work_path(Node),
+    get_resources(Resources, Node, CWD).
 
 get_resources([], _, _)->ok;
 get_resources([{Path, Name}|Tail], Node, CWD)->

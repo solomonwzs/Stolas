@@ -128,7 +128,7 @@ handle_cast(Msg={worker_msg, _Type, _Process, _Detail},
     {noreply, State};
 handle_cast({worker_msg, error, Process, Detail}, State)->
     ?close_task(State#master_state.task,
-                {error, stolas_msg:process_worker_err_msg(Process, Detail)}),
+                {error, {Process, Detail}}),
     {noreply, State};
 handle_cast({worker_msg, ok, init, _WorkerName},
             State=#master_state{
