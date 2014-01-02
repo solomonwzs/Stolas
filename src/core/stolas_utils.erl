@@ -2,7 +2,23 @@
 
 -export([get_config/0, get_config/1]).
 -export([readable_datetime/1]).
--export([json_encode/1]).
+-export([json_encode/1, json_encode/2]).
+
+
+-define(bitstring_tail(Bin),
+        case size(Bin) of
+            0-> <<>>;
+            _-> element(2, split_binary(Bin, 1))
+        end).
+
+-define(proplist_to_json(Proplist),
+        <<${, (?bitstring_tail(
+                  lists:foldl(
+                    fun({Key, Value}, Acc)->
+                            <<Acc/bitstring, $,, (json_encode(Key))/bitstring,
+                              $:, (json_encode(Value))/bitstring>>
+                    end,
+                    <<>>, Proplist)))/bitstring, $}>>).
 
 
 readable_datetime(Date)->
@@ -33,19 +49,6 @@ is_proplist([{K, _}|T]) when is_atom(K) orelse is_list(K)->
 is_proplist(_)->false.
 
 
--define(bitstring_tail(Bin),
-        case size(Bin) of
-            0-> <<>>;
-            _-> element(2, split_binary(Bin, 1))
-        end).
--define(proplist_to_json(Proplist),
-        <<${, (?bitstring_tail(
-                  lists:foldl(
-                    fun({Key, Value}, Acc)->
-                            <<Acc/bitstring, $,, (json_encode(Key))/bitstring,
-                              $:, (json_encode(Value))/bitstring>>
-                    end,
-                    <<>>, Proplist)))/bitstring, $}>>).
 json_encode(T) when T=:=null orelse T=:=true orelse T=:=false->
     <<(atom_to_binary(T, utf8))/bitstring>>;
 json_encode(T) when is_atom(T)->
@@ -71,17 +74,16 @@ json_encode(T) when is_list(T)->
             end
     end;
 json_encode(T) when is_tuple(T)->
-    if
-        element(1, T)=:=dict->
-            try
-                Proplist=dict:to_list(T),
-                ?proplist_to_json(Proplist)
-            catch
-                _:_->json_encode(tuple_to_list(T))
-            end;
-        true->json_encode(tuple_to_list(T))
-    end;
+    json_encode(tuple_to_list(T));
 json_encode(T) when is_pid(T)->
     json_encode(pid_to_list(T));
 json_encode(T) when is_port(T)->
     json_encode(erlang:port_to_list(T)).
+
+
+json_encode(T, dict)->
+    Proplist=dict:to_list(T),
+    ?proplist_to_json(Proplist);
+json_encode(T, gb_tree)->
+    Proplist=gb_trees:to_list(T),
+    ?proplist_to_json(Proplist).

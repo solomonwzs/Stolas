@@ -21,6 +21,7 @@
 -define(match_lock(Lock, Pid, Type),
         (Lock=:={Pid, Type})).
 
+
 start_link(RegName, Conf)->
     gen_server:start_link({local, RegName}, ?MODULE, [Conf], []).
 
@@ -61,6 +62,7 @@ init([Conf])->
                    lock=nil
                   }}
     end.
+
 
 handle_call(Msg={get_archive, Pid, write}, _From,
             Archive=#archive{
