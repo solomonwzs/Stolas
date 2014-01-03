@@ -31,20 +31,10 @@ init([Conf])->
     case proplists:lookup(master_node, Conf) of
         none->{stop, "master node was not defined"};
         {master_node, MasterNode}->
-            Nodes=proplists:get_value(nodes, Conf, [node()]),
-            {ok, PingTref}=?ping_tref(Nodes),
-
-            case proplists:get_value(ssh_files_transport, Conf, false) of
-                false->ssh:stop();
-                true->ssh:start()
-            end,
-
             Archive=if
                         MasterNode=:=node()->
                             #archive{
                                task_dict=?dict_new('stolas:task_dict'),
-                               ping_tref=PingTref,
-                               master_node=MasterNode,
                                config=Conf,
                                last_syne_time=nil,
                                status=ok,
@@ -59,6 +49,7 @@ init([Conf])->
                               }
                     end,
             {ok, Archive#archive{
+                   master_node=MasterNode,
                    lock=nil
                   }}
     end.
@@ -123,7 +114,7 @@ handle_call(get_master_archive, _From, Archive=#archive{
                                                  }) when MasterNode=/=node()->
     {reply, {master_change, LastSyncTime, MasterNode}, Archive};
 handle_call(_Msg, _From, Archive)->
-    {reply, {error, "error message"}, Archive}.
+    {reply, {error, error_message}, Archive}.
 
 
 handle_cast(wait_master, Archive=#archive{
@@ -163,16 +154,13 @@ code_change(_Vsn, Archive, _Extra)->
     {ok, Archive}.
 
 
-terminate(_Reason, #archive{
-                      ping_tref=PingTref
-                     })->
-    timer:cancel(PingTref),
+terminate(_Reason, _Archive)->
     ok.
 
 
 get_master_archive(MasterNode)->
     try
-        gen_server:call(get_master_archive, {stolas_archive, MasterNode}, 1000)
+        gen_server:call({stolas_archive, MasterNode}, get_master_archive, 1000)
     catch
         exit:{noreply, _}->{error, noreply};
         exit:{timeout, _}->{error, timeout};

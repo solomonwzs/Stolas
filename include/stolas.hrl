@@ -43,7 +43,6 @@
 -record(archive, {
           task_dict::dict(),
           config::list(tuple()),
-          ping_tref::term(),
           master_node::atom(),
           last_syne_time::{integer(), integer(), integer()}|nil,
           status::wait_master|ok|no_master,

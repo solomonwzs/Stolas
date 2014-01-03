@@ -8,13 +8,18 @@
          code_change/3, terminate/2]).
 
 -record(manager_state, {
-          task_dict::dict(),
-          ping_tref::term(),
-          master_node::atom(),
-          config::list(tuple())
+          ping_tref::term()|nil,
+          status::ok|waiting
          }).
 
 -define(PING_INTERVAL, 1500).
+
+-define(get_archive, gen_server:call(stolas_archive, get_archive)).
+-define(get_and_lock_archive, gen_server:call(stolas_archive,
+                                              {get_archive, self(), write})).
+-define(set_and_unlock_archive(Archive),
+        gen_server:call(stolas_archive,
+                        {set_archive, Archive, self(), write})).
 
 -define(sub_workspace(Workspace, X), filename:join(Workspace, X)).
 -define(ping_tref(Nodes),
@@ -69,11 +74,8 @@
         case gen_server:call({stolas_manager, Node},
                              {new_sub_task, ThreadNum,
                               Mod, Workspace, Task, LeaderNode, Resources}) of
-            ok->
-                gen_server:cast({MasterId, Node}, check_leader),
-                ok;
-            {error, R}->
-                R
+            ok->gen_server:cast({MasterId, Node}, check_leader);
+            Err={error, _}->Err
         end).
 
 
@@ -83,122 +85,105 @@ start_link(RegName, Conf)->
 
 init([Conf])->
     process_flag(trap_exit, true),
-    {PingTref, MasterNode}=process_conf(Conf),
-    {ok, #manager_state{
-            task_dict=?dict_new('stolas:task_dict'),
-            ping_tref=PingTref,
-            master_node=MasterNode,
-            config=Conf
-           }}.
+    case ?get_archive of
+        {ok, #archive{
+                config=Conf
+               }}->
+            {ok, PingTref}=process_conf(Conf),
+            {ok, #manager_state{
+                    %task_dict=?dict_new('stolas:task_dict'),
+                    ping_tref=PingTref,
+                    status=ok
+                   }};
+        {error, _}->
+            gen_server:cast(self(), wait_archive),
+            {ok, #manager_state{
+                    ping_tref=nil,
+                    status=waiting
+                   }}
+    end.
 
 
-handle_call(get_config, _From, State=#manager_state{
-                                        master_node=MasterNode,
-                                        config=Conf
-                                       })->
-    if
-        MasterNode=:=node()->
-            {reply, {ok, Conf}, State};
-        true->
-            Ret=gen_server:call({stolas_manager, MasterNode}, get_config),
-            {reply, Ret, State}
-    end;
-handle_call(reload_config, _From, State=#manager_state{
-                                           master_node=MasterNode,
-                                           task_dict=TaskDict
-                                          }) when MasterNode=:=node()->
-    case ?dict_size(TaskDict) of
-        0->
-            {ok, NewConf}=stolas_utils:get_config(default),
-            cancel_conf(State),
-            {NewPingTref, _}=process_conf(NewConf),
-            NewState=State#manager_state{
-                       config=NewConf,
-                       ping_tref=NewPingTref
-                      },
-            {reply, {ok, NewState}, NewState};
-        _->{reply, {error, "task list is not empty"}, State}
-    end;
 handle_call(get_state, _From, State)->
     {reply, {ok, State}, State};
 handle_call({new_sub_task, ThreadNum, Mod, Workspace, Task, LeaderNode,
              Resources}, _From, State=#manager_state{
-                                         task_dict=TaskDict
+                                         %task_dict=TaskDict
+                                         status=ok
                                         })->
-    case ?dict_find(TaskDict, Task) of
-        {ok, _}->
-            {reply, {error, "already existed"}, State};
-        error->
-            case new_task(ThreadNum, Mod, Workspace, Task, LeaderNode,
-                          Resources) of
-                Err={error, _}->{reply, Err, State};
-                {ok, _, _}->
-                    NewTaskDict=?dict_add(TaskDict, Task, LeaderNode),
-                    {reply, ok, State#manager_state{
-                                  task_dict=NewTaskDict
-                                 }}
-            end
-    end;
-handle_call({new_task, Opt, LeaderNode}, _From,
-            State=#manager_state{
-                     task_dict=TaskDict,
-                     config=Conf
-                    })->
+    {ok, #archive{
+            task_dict=TaskDict
+           }}=?get_archive,
+    Reply=case ?dict_find(TaskDict, Task) of
+              {ok, _}->
+                  case new_task(ThreadNum, Mod, Workspace, Task, LeaderNode,
+                                Resources) of
+                      Err={error, _}->Err;
+                      {ok, _, _}->ok
+                  end;
+              error->{error, task_not_existed}
+          end,
+    {reply, Reply, State};
+handle_call({new_task, Opt, LeaderNode}, _From, State=#manager_state{
+                                                         status=ok
+                                                        })->
+    {ok, Archive=#archive{
+                    task_dict=TaskDict,
+                    config=Conf
+                   }}=?get_and_lock_archive,
     Task=proplists:get_value(task, Opt),
-    case ?dict_find(TaskDict, Task) of
-        {ok, _}->
-            {reply, {error, "already existed"}, State};
-        error->
-            Mod=proplists:get_value(mod, Opt),
-            Workspace=proplists:get_value(workspace, Opt),
-            Resources=proplists:get_value(resources, Opt),
+    Reply=case ?dict_find(TaskDict, Task) of
+              {ok, _}->
+                  {error, task_already_existed};
+              error->
+                  Mod=proplists:get_value(mod, Opt),
+                  Workspace=proplists:get_value(workspace, Opt),
+                  Resources=proplists:get_value(resources, Opt),
 
-            file:make_dir(filename:join(Workspace, "log")),
+                  file:make_dir(filename:join(Workspace, "log")),
 
-            ValidNodes=?valid_nodes(Conf),
-            ValidAlloc=lists:filter(
-                         fun({N, _})->
-                                 lists:member(N, ValidNodes)
-                         end, proplists:get_value(thread_alloc, Opt)),
-            case ?split_thread_alloc(LeaderNode, ValidAlloc) of
-                {none, _}->{reply, {error, "leader node not existed"}, State};
-                {{LeaderNode, LeaderThreadNum}, SubAlloc}->
-                    case new_task(LeaderThreadNum, Mod, Workspace,
-                                  Task, LeaderNode, Resources) of
-                        Err={error, _}->
-                            {reply, Err, State};
-                        {ok, _, MasterId}->
-                            NewTaskDict=?dict_add(TaskDict, Task, LeaderNode),
-                            InitArgs=proplists:get_value(init_args, Opt),
-                            Acc=proplists:get_value(acc, Opt),
-                            gen_server:cast({MasterId, node()},
-                                            {init, InitArgs, Acc}),
-                            lists:foreach(
-                              fun({N, T})->
-                                      ?new_sub_task(N, MasterId, T, Mod,
-                                                    Workspace, Task,
-                                                    LeaderNode, Resources)
-                              end, SubAlloc),
-                            {reply, ok, State#manager_state{
-                                          task_dict=NewTaskDict}}
-                    end
-            end
-    end;
+                  ValidNodes=?valid_nodes(Conf),
+                  ValidAlloc=lists:filter(
+                               fun({N, _})->
+                                       lists:member(N, ValidNodes)
+                               end, proplists:get_value(thread_alloc, Opt)),
+                  case ?split_thread_alloc(LeaderNode, ValidAlloc) of
+                      {none, _}->{error, leader_not_existed};
+                      {{LeaderNode, LeaderThreadNum}, SubAlloc}->
+                          case new_task(LeaderThreadNum, Mod, Workspace,
+                                        Task, LeaderNode, Resources) of
+                              Err={error, _}->
+                                  {reply, Err, State};
+                              {ok, _, MasterId}->
+                                  InitArgs=proplists:get_value(init_args, Opt),
+                                  Acc=proplists:get_value(acc, Opt),
+                                  gen_server:cast({MasterId, node()},
+                                                  {init, InitArgs, Acc}),
+                                  ?set_and_unlock_archive(
+                                     Archive#archive{
+                                       task_dict=?dict_add(TaskDict, Task,
+                                                           LeaderNode)
+                                      }),
+                                  lists:foreach(
+                                    fun({N, T})->
+                                            ?new_sub_task(N, MasterId, T, Mod,
+                                                          Workspace, Task,
+                                                          LeaderNode, Resources)
+                                    end, SubAlloc)
+                          end
+                  end
+          end,
+    {reply, Reply, State};
 handle_call(_Msg, _From, State)->
-    {reply, {error, "error message"}, State}.
+    {reply, {error, error_message}, State}.
 
 
-handle_cast(sync_state, State=#manager_state{
-                                 master_node=MasterNode
-                                }) when MasterNode=/=node()->
-    NewState=case gen_server:call({stolas_manager, MasterNode}, get_state) of
-                 {ok, S}->S;
-                 _->State
-             end,
-    {noreply, NewState};
 handle_cast({close_task, Task, Reason}, State=#manager_state{
-                                                 task_dict=TaskDict
+                                                 status=ok
                                                 })->
+    {ok, Archive=#archive{
+                    task_dict=TaskDict
+                   }}=?get_and_lock_archive,
     case ?dict_find(TaskDict, Task) of
         {ok, _LeaderNode}->
             supervisor:terminate_child(stolas_sup, Task),
@@ -217,11 +202,12 @@ handle_cast({close_task, Task, Reason}, State=#manager_state{
                                               {error, Msg}
                                              ])
             end,
-            {noreply, State#manager_state{
-                        task_dict=?dict_del(TaskDict, Task)}};
-        error->
-            {noreply, State}
-    end;
+            ?set_and_unlock_archive(Archive#archive{
+                                      task_dict=?dict_del(TaskDict, Task)
+                                     });
+        error->ok
+    end,
+    {noreply, State};
 handle_cast(_Msg, State)->
     {noreply, State}.
 
@@ -254,19 +240,8 @@ process_conf(Conf)->
             error_logger:add_report_handler(stolas_log_handler, [RLogConf]);
         _->ok
     end,
-    MasterNode=proplists:get_value(master_node, Conf),
                  
-    {PingTref, MasterNode}.
-
-
-cancel_conf(#manager_state{
-               task_dict=_TaskDict,
-               ping_tref=PingTref
-              })->
-    timer:cancel(PingTref),
-    ?dict_drop(_TaskDict),
-    error_logger:delete_report_handler(stolas_log_handler),
-    ok.
+    {ok, PingTref}.
 
 
 new_task(ThreadNum, Mod, Workspace, Task, LeaderNode, Resources)->
