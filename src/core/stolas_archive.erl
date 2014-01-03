@@ -132,7 +132,8 @@ handle_cast(wait_master, Archive=#archive{
                         last_syne_time=Timestamp,
                         status=ok
                        }};
-        {error, Reason} when Reason=:=noreply orelse Reason=:=timeout->
+        {error, Reason} when Reason=:=noreply orelse Reason=:=timeout orelse
+                             Reason=:=nodedown->
             timer:apply_after(1000, gen_server, cast, [self(), wait_master]),
             {noreply, Archive};
         {master_change, _, NewMasterNode}->
@@ -164,6 +165,7 @@ get_master_archive(MasterNode)->
     catch
         exit:{noreply, _}->{error, noreply};
         exit:{timeout, _}->{error, timeout};
+        exit:{{nodedown, MasterNode}, _}->{error, nodedown};
         _:_->{error, unexpected}
     end.
 

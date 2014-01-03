@@ -93,7 +93,7 @@ read_remote_file(Arg={LocalDev, Channel, RemoteHandle})->
     {ok, Path::string()}|{error, Reason::term()}.
 get_work_path(Node)->
     case rpc:call(Node, file, get_cwd, [], ?RPC_TIMEOUT) of
-        {ok, Path}->Path;
+        OK={ok, _}->OK;
         {error, Reason}->error(Reason)
     end.
 

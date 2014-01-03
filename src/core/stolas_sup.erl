@@ -49,7 +49,7 @@ init([]) ->
       permanent, 5000, worker, [stolas_archive]},
     Manager={
       stolas_manager,
-      {stolas_manager, start_link, [stolas_manager, Conf]},
+      {stolas_manager, start_link, [stolas_manager]},
       permanent, 5000, worker, [stolas_manager]},
     Processes = [Web, Archive, Manager],
     Strategy = {one_for_one, 10, 10},

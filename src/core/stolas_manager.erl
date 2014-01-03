@@ -3,7 +3,7 @@
 
 -include("stolas.hrl").
 
--export([start_link/2]).
+-export([start_link/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          code_change/3, terminate/2]).
 
@@ -79,11 +79,11 @@
         end).
 
 
-start_link(RegName, Conf)->
-    gen_server:start_link({local, RegName}, ?MODULE, [Conf], []).
+start_link(RegName)->
+    gen_server:start_link({local, RegName}, ?MODULE, [], []).
 
 
-init([Conf])->
+init([])->
     process_flag(trap_exit, true),
     case ?get_archive of
         {ok, #archive{
@@ -91,7 +91,6 @@ init([Conf])->
                }}->
             {ok, PingTref}=process_conf(Conf),
             {ok, #manager_state{
-                    %task_dict=?dict_new('stolas:task_dict'),
                     ping_tref=PingTref,
                     status=ok
                    }};
@@ -108,7 +107,6 @@ handle_call(get_state, _From, State)->
     {reply, {ok, State}, State};
 handle_call({new_sub_task, ThreadNum, Mod, Workspace, Task, LeaderNode,
              Resources}, _From, State=#manager_state{
-                                         %task_dict=TaskDict
                                          status=ok
                                         })->
     {ok, #archive{
@@ -178,6 +176,22 @@ handle_call(_Msg, _From, State)->
     {reply, {error, error_message}, State}.
 
 
+handle_cast(wait_archive, State=#manager_state{
+                                   status=waiting
+                                  })->
+    case ?get_archive of
+        {ok, #archive{
+                config=Conf
+               }}->
+            {ok, PingTref}=process_conf(Conf),
+            {noreply, State#manager_state{
+                        ping_tref=PingTref,
+                        status=ok
+                       }};
+        {error, _}->
+            timer:apply_after(1000, gen_server, cast, [self(), wait_archive]),
+            {noreply, State}
+    end;
 handle_cast({close_task, Task, Reason}, State=#manager_state{
                                                  status=ok
                                                 })->
@@ -221,8 +235,8 @@ code_change(_Vsn, State, _Extra)->
 
 
 terminate(_Reason, #manager_state{
-                             ping_tref=PingTref
-                            })->
+                      ping_tref=PingTref
+                     })->
     timer:cancel(PingTref),
     ok.
 
@@ -240,7 +254,7 @@ process_conf(Conf)->
             error_logger:add_report_handler(stolas_log_handler, [RLogConf]);
         _->ok
     end,
-                 
+
     {ok, PingTref}.
 
 

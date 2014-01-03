@@ -103,7 +103,8 @@ handle_cast(check_leader, State=#master_state{
         exit:{noproc, _}->
             ?close_task(Task, normal),
             {noreply, State};
-        _:_->
+        T:W->
+            stolas_utils:debug_log("~p~n", [{T, W, erlang:get_stacktrace()}]),
             ?close_task(Task, force),
             {noreply, State}
     end;
