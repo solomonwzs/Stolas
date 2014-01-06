@@ -1,4 +1,7 @@
 -module(stolas_file).
+
+-include("stolas.hrl").
+
 -export([get_work_path/1]).
 -export([distribute/2, get_resources/2]).
 -export([upload_file/2, download_file/2]).

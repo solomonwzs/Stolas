@@ -97,14 +97,13 @@ handle_cast(check_leader, State=#master_state{
                 map;
             {S, _}->S
         end,
-        timer:apply_after(1000, gen_server, cast, [self(), check_leader]),
+        ?cast_self_after(1000, check_leader),
         {noreply, State#master_state{status=NewStatus}}
     catch
         exit:{noproc, _}->
             ?close_task(Task, normal),
             {noreply, State};
-        T:W->
-            stolas_utils:debug_log("~p~n", [{T, W, erlang:get_stacktrace()}]),
+        _:_->
             ?close_task(Task, force),
             {noreply, State}
     end;

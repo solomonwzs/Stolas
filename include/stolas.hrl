@@ -1,5 +1,5 @@
--ifndef(STOLAS_INCLUDED).
--define(STOLAS_INCLUDED, 1).
+-ifndef(__STOLAS_INCLUDED).
+-define(__STOLAS_INCLUDED, 1).
 
 -define(dict_new(Name), dict:new()).
 -define(dict_add(Dict, Key, Value), dict:store(Key, Value, Dict)).
@@ -10,6 +10,15 @@
 
 -define(task_id(Task, Type),
         list_to_atom(lists:concat(["stolas_task:", Task, ":", Type]))).
+
+-define(cast_self_after(Msecs, Msg),
+        timer:apply_after(Msecs, gen_server, cast, [self(), Msg])).
+
+-define(debug_log(Info), error_logger:info_report(
+                           [{tyep, debug},
+                            {file, ?FILE},
+                            {line, ?LINE},
+                            {info, Info}])).
 
 %-define(dict_new(Name), ets:new(Name, [set, private])).
 %-define(dict_add(Dict, Key, Value),

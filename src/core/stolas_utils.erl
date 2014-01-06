@@ -5,7 +5,6 @@
 -export([get_config/0, get_config/1]).
 -export([readable_datetime/1]).
 -export([json_encode/1, json_encode/2]).
--export([debug_log/1, debug_log/2]).
 
 
 -define(bitstring_tail(Bin),
@@ -93,18 +92,3 @@ json_encode(T, dict)->
 json_encode(T, gb_tree)->
     Proplist=gb_trees:to_list(T),
     ?proplist_to_json(Proplist).
-
-
-debug_log(_Str)->
-    {current_stacktrace, [_, Stack|_]}=erlang:process_info(
-                                         self(), current_stacktrace),
-    apply(io, format, ["~s [~p]:~n"++_Str,
-                       [readable_datetime(calendar:local_time()),Stack]]).
-
-
-debug_log(_Format, _Terms)->
-    {current_stacktrace, [_, Stack|_]}=erlang:process_info(
-                                         self(), current_stacktrace),
-    apply(io, format, ["~s [~p]:~n"++_Format,
-                       [readable_datetime(calendar:local_time()),Stack|
-                        _Terms]]).

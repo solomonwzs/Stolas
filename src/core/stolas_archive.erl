@@ -31,23 +31,26 @@ init([Conf])->
     case proplists:lookup(master_node, Conf) of
         none->{stop, "master node was not defined"};
         {master_node, MasterNode}->
-            Archive=if
-                        MasterNode=:=node()->
-                            #archive{
-                               task_dict=?dict_new('stolas:task_dict'),
-                               config=Conf,
-                               last_syne_time=nil,
-                               status=ok,
-                               role=master
-                              };
-                        true->
-                            gen_server:cast(self(), wait_master),
-                            #archive{
-                               last_syne_time={0, 0, 0},
-                               status=wait_master,
-                               role=sub
-                              }
-                    end,
+            Archive=
+            if
+                MasterNode=:=node()->
+                    ?cast_self_after(1000, check_nodes),
+                    process_conf(Conf),
+                    #archive{
+                       task_dict=?dict_new('stolas:task_dict'),
+                       config=Conf,
+                       last_syne_time=nil,
+                       status=ok,
+                       role=master
+                      };
+                true->
+                    ?cast_self_after(0, wait_master),
+                    #archive{
+                       last_syne_time={0, 0, 0},
+                       status=wait_master,
+                       role=sub
+                      }
+            end,
             {ok, Archive#archive{
                    master_node=MasterNode,
                    lock=nil
@@ -126,6 +129,8 @@ handle_cast(wait_master, Archive=#archive{
                            task_dict=TaskDict,
                            config=Conf
                           }}->
+            ?cast_self_after(1000, check_nodes),
+            process_conf(Conf),
             {noreply, Archive#archive{
                         task_dict=TaskDict,
                         config=Conf,
@@ -134,15 +139,22 @@ handle_cast(wait_master, Archive=#archive{
                        }};
         {error, Reason} when Reason=:=noreply orelse Reason=:=timeout orelse
                              Reason=:=nodedown->
-            timer:apply_after(1000, gen_server, cast, [self(), wait_master]),
+            ?cast_self_after(1000, wait_master),
             {noreply, Archive};
         {master_change, _, NewMasterNode}->
-            gen_server:cast(self(), wait_master),
+            ?cast_self_after(1000, wait_master),
             {noreply, Archive#archive{
                         master_node=NewMasterNode
                        }};
         _->{noreply, Archive#archive{status=no_master}}
     end;
+handle_cast(check_nodes, Archive=#archive{
+                                    config=Conf
+                                   })->
+    Nodes=proplists:get_value(nodes, Conf, [node()]),
+    spawn(lists, foreach, [fun(Node)->net_adm:ping(Node) end, Nodes]),
+    ?cast_self_after(1000, check_nodes),
+    {noreply, Archive};
 handle_cast(_Msg, Archive)->
     {noreply, Archive}.
 
@@ -190,4 +202,16 @@ sync_archive(Archive=#archive{
                     sync_archive(Archive#archive{master_node=NewMasterNode});
                 Err={error, _}->Err
             end
+    end.
+
+
+process_conf(Conf)->
+    case proplists:get_value(ssh_files_transport, Conf, false) of
+        true->ssh:start();
+        _->ssh:stop()
+    end,
+    case proplists:get_value(readable_file_log, Conf) of
+        RLogConf when is_list(RLogConf)->
+            error_logger:add_report_handler(stolas_log_handler, [RLogConf]);
+        _->ok
     end.
