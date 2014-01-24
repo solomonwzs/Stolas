@@ -4,7 +4,7 @@
 -callback init(Workspace::string(), Args::term())->
     ok|{error, Reason::term()}.
 
--callback alloc(Node::atom())->
+-callback alloc(WorkerName::atom(), Node::atom())->
     {ok, TaskArgs::term()}|none.
 
 -callback map(Workspace::string(), TaskArgs::term())->

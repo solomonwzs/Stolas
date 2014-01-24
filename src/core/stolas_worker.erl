@@ -38,7 +38,7 @@ handle_call({alloc, PWorkerName}, {Pid, _}, State=#worker_state{
                                           })->
     Node=node(Pid),
     try
-        Task=apply(?task_mod(Master), alloc, [Node]),
+        Task=apply(?task_mod(Master), alloc, [PWorkerName, Node]),
         case Task of
             none->
                 ?send_msg_to_master(Master, 'end', alloc, null);
