@@ -107,15 +107,15 @@ handle_cast(check_leader, State=#master_state{
             ?close_task(Task, force),
             {noreply, State}
     end;
-handle_cast({init, InitArgs, Acc}, State=#master_state{
-                                            mod=Mod,
-                                            task=Task,
-                                            leader=Leader,
-                                            status=idle
-                                           })->
+handle_cast({init, InitArgs}, State=#master_state{
+                                       mod=Mod,
+                                       task=Task,
+                                       leader=Leader,
+                                       status=idle
+                                      })->
     if
         Leader=:=node()->gen_server:cast(?main_worker(Task),
-                                         {init, Mod, InitArgs, Acc});
+                                         {init, Mod, InitArgs});
         true->gen_server:cast(self(), wait_leader)
     end,
     {noreply, State#master_state{status=init}};

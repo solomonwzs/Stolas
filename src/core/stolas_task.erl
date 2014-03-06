@@ -2,9 +2,9 @@
 -export([start/1, stop/1]).
 
 -callback init(Workspace::string(), Args::term())->
-    ok|{error, Reason::term()}.
+    {ok, Acc::term()}|{error, Reason::term()}.
 
--callback alloc(WorkerName::atom(), Node::atom())->
+-callback alloc(Acc::term(), WorkerName::atom(), Node::atom())->
     {ok, TaskArgs::term()}|none.
 
 -callback map(Workspace::string(), TaskArgs::term())->

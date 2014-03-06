@@ -145,9 +145,8 @@ handle_call({new_task, Opt, LeaderNode}, _From, State=#manager_state{
                             {reply, Err, State};
                         {ok, _, MasterId}->
                             InitArgs=proplists:get_value(init_args, Opt),
-                            Acc=proplists:get_value(acc, Opt),
                             gen_server:cast({MasterId, node()},
-                                            {init, InitArgs, Acc}),
+                                            {init, InitArgs}),
                             ?set_and_unlock_archive(
                                Archive#archive{
                                  task_dict=?dict_add(TaskDict, Task,

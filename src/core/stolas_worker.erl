@@ -34,11 +34,12 @@ init([RegName, Opt])->
 
 handle_call({alloc, PWorkerName}, {Pid, _}, State=#worker_state{
                                            master=Master,
-                                           name=EWorkerName
+                                           name=EWorkerName,
+                                           acc=Acc
                                           })->
     Node=node(Pid),
     try
-        Task=apply(?task_mod(Master), alloc, [PWorkerName, Node]),
+        Task=apply(?task_mod(Master), alloc, [Acc, PWorkerName, Node]),
         case Task of
             none->
                 ?send_msg_to_master(Master, 'end', alloc, null);
@@ -57,18 +58,21 @@ handle_call({alloc, PWorkerName}, {Pid, _}, State=#worker_state{
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
-handle_cast({init, Mod, InitArgs, Acc}, State=#worker_state{
+handle_cast({init, Mod, InitArgs}, State=#worker_state{
                                                  workspace=Workspace,
                                                  master=Master,
                                                  name=WorkerName
                                                 })->
+    Acc=
     try
         case apply(Mod, init, [Workspace, InitArgs]) of
-            ok->
-                ?send_msg_to_master(Master, ok, init, WorkerName);
+            {ok, A}->
+                ?send_msg_to_master(Master, ok, init, WorkerName),
+                A;
             {error, Reason}->
                 ?send_msg_to_master(Master, error, init, {{WorkerName, node()},
-                                                          Reason})
+                                                          Reason}),
+                undefined
         end
     catch
         T:R->
