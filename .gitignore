@@ -7,3 +7,14 @@
 /TEST-*.xml
 /deps
 *.swp
+
+Mnesia.stolas_dev*/
+data/
+log/
+src/example/
+tmp/
+
+.depsolver_plt
+erl_crash.dump*
+dialyzer_plt
+stolas_log
