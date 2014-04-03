@@ -39,7 +39,16 @@ get_config(default)->
     {ok, ConfFile}=application:get_env(stolas, config_file),
     get_config(ConfFile);
 get_config(ConfFile)->
-    file:consult(ConfFile).
+    case file:consult(ConfFile) of
+        R={ok, _}->R;
+        {error, _}->
+            Conf=[{nodes, [node()]},
+                  {master_node, node()},
+                  {readable_file_log, [{file, "./stolas_log"},
+                                       {format, default}]}
+                 ],
+            {ok, Conf}
+    end.
 
 
 is_string([])->true;
