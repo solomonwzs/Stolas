@@ -41,7 +41,6 @@ upgrade() ->
 %% @spec init([]) -> SupervisorTree
 %% @doc supervisor callback.
 init([]) ->
-    Web = web_specs(stolas_web, 8080),
     {ok, Conf}=stolas_utils:get_config(default),
     Archive={
       stolas_archive,
@@ -51,8 +50,15 @@ init([]) ->
       stolas_manager,
       {stolas_manager, start_link, [stolas_manager]},
       permanent, 5000, worker, [stolas_manager]},
-    Processes = [Web, Archive, Manager],
-    Strategy = {one_for_one, 10, 10},
+    Processes=
+    case proplists:lookup(web_client, Conf) of
+        {web_client, WebConf}->
+            Port=proplists:get_value(port, WebConf, 8080),
+            Web=web_specs(stolas_web, Port),
+            [Web, Archive, Manager];
+        none->[Archive, Manager]
+    end,
+    Strategy={one_for_one, 10, 10},
     {ok,
      {Strategy, lists:flatten(Processes)}}.
 
