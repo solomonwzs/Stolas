@@ -123,6 +123,7 @@ handle_call({new_task, Opt, LeaderNode}, _From, State=#manager_state{
     Reply=
     case ?dict_find(TaskDict, Task) of
         {ok, _}->
+            ?set_and_unlock_archive(Archive),
             {error, task_already_existed};
         error->
             Mod=proplists:get_value(mod, Opt),
