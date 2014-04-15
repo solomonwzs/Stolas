@@ -12,6 +12,8 @@
           acc::undefined|term()
          }).
 
+-define(TRACE, {trace, erlang:get_stacktrace()}).
+
 -define(task_mod(Master), gen_server:call(Master, get_mod)).
 -define(task_main_worker(Master), gen_server:call(Master, get_main_worker)).
 -define(send_msg_to_master(Master, Type, Process, Detail),
@@ -50,19 +52,22 @@ handle_call({alloc, PWorkerName}, {Pid, _}, State=#worker_state{
         {reply, Task, State}
     catch
         T:R->
-            ?send_msg_to_master(Master, error, alloc, {{EWorkerName, node()},
-                                                       {PWorkerName, Node},
-                                                       {T, R}}),
+            ?send_msg_to_master(Master, error, alloc,
+                                [{eworker, {EWorkerName, node()}},
+                                 {pworker, {PWorkerName, Node}},
+                                 {what, {T, R}},
+                                 ?TRACE
+                                ]),
             {reply, {error, {T, R}}, State}
     end;
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
 
 handle_cast({init, Mod, InitArgs}, State=#worker_state{
-                                                 workspace=Workspace,
-                                                 master=Master,
-                                                 name=WorkerName
-                                                })->
+                                            workspace=Workspace,
+                                            master=Master,
+                                            name=WorkerName
+                                           })->
     Acc=
     try
         case apply(Mod, init, [Workspace, InitArgs]) of
@@ -76,16 +81,19 @@ handle_cast({init, Mod, InitArgs}, State=#worker_state{
         end
     catch
         T:R->
-            ?send_msg_to_master(Master, error, init, {{WorkerName, node()},
-                                                      {T, R}})
+            ?send_msg_to_master(Master, error, init,
+                                [{worker, {WorkerName, node()}},
+                                 {what, {T, R}},
+                                 ?TRACE
+                                ])
     end,
     {noreply, State#worker_state{acc=Acc}};
 handle_cast({reduce, Mod}, State=#worker_state{
-                             workspace=Workspace,
-                             master=Master,
-                             name=WorkerName,
-                             acc=Acc
-                            })->
+                                    workspace=Workspace,
+                                    master=Master,
+                                    name=WorkerName,
+                                    acc=Acc
+                                   })->
     try
         case apply(Mod, reduce, [Workspace, Acc]) of
             {ok, Result}->
@@ -98,7 +106,10 @@ handle_cast({reduce, Mod}, State=#worker_state{
     catch
         T:R->
             ?send_msg_to_master(Master, error, reduce,
-                                {{WorkerName, node()}, {T, R}})
+                                [{worker, {WorkerName, node()}},
+                                 {what, {T, R}},
+                                 ?TRACE
+                                ])
     end,
     {noreply, State};
 handle_cast(map, State=#worker_state{
@@ -130,8 +141,11 @@ handle_cast(map, State=#worker_state{
             catch
                 T:R->
                     ?send_msg_to_master(Master, error, map,
-                                        {{WorkerName, node()}, TaskArgs,
-                                         {T, R}})
+                                        [{worker, {WorkerName, node()}},
+                                         {task_args, TaskArgs},
+                                         {what, {T, R}},
+                                         ?TRACE
+                                        ])
             end;
         {error, _Reason}->ok
     end,
@@ -162,10 +176,12 @@ handle_cast({accumulate, PWorkerName, Node, TaskArgs, Return},
            catch
                T:R->
                    ?send_msg_to_master(Master, error, accumulate,
-                                       {{EWorkerName, node()},
-                                        {PWorkerName, Node},
-                                        Return,
-                                        {T, R}}),
+                                       [{eworker, {EWorkerName, node()}},
+                                        {pworker, {PWorkerName, Node}},
+                                        {return, Return},
+                                        {what, {T, R}},
+                                        ?TRACE
+                                       ]),
                    Acc
            end,
     {noreply, State#worker_state{acc=NewAcc}};

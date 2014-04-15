@@ -190,17 +190,20 @@ handle_cast(Msg={close_task, Task, Reason}, State=#manager_state{
                 {ok, _LeaderNode}->
                     case Reason of
                         normal->
-                            error_logger:info_report([{task, Task},
-                                                      {msg, "completed"}
-                                                     ]);
+                            error_logger:info_report(
+                              [{task, Task},
+                               {msg, "completed"}
+                              ]);
                         force->
-                            error_logger:info_report([{task, Task},
-                                                      {msg, "closed forcibly"}
-                                                     ]);
+                            error_logger:info_report(
+                              [{task, Task},
+                               {msg, "closed forcibly"}
+                              ]);
                         {error, Err}->
-                            error_logger:info_report([{task, Task},
-                                                      {error, Err}
-                                                     ])
+                            error_logger:info_report(
+                              [{task, Task},
+                               {error, Err}
+                              ])
                     end,
                     ?dict_del(TaskDict, Task);
                 error->TaskDict
