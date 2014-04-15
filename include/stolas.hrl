@@ -1,5 +1,5 @@
--ifndef(__STOLAS_INCLUDED).
--define(__STOLAS_INCLUDED, 1).
+-ifndef(__INCLUDE_STOLAS_HRL).
+-define(__INCLUDE_STOLAS_HRL, 1).
 
 -define(dict_new(Name), dict:new()).
 -define(dict_add(Dict, Key, Value), dict:store(Key, Value, Dict)).
@@ -50,7 +50,7 @@
 %-define(dict_size(Dict), ets:info(Dict, size)).
 
 -record(archive, {
-          task_dict::dict(),
+          task_dict::dict:dict(),
           config::list(tuple()),
           master_node::atom(),
           last_syne_time::{integer(), integer(), integer()}|nil,
