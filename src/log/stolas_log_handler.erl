@@ -7,6 +7,14 @@
 
 -define(date_now, stolas_utils:readable_datetime(calendar:local_time())).
 
+-define(list_element_format(List),
+        case lists:foldr(fun(X, Acc)->
+                                 [$,, term_format(X)|Acc]
+                         end, [], List) of
+            []->[];
+            R->tl(R)
+        end).
+
 -record(handler_state, {
           log_dev,
           format::default|json
@@ -61,13 +69,7 @@ code_change(_Vsn, State, _Extra)->
     {ok, State}.
 
 
--define(list_element_format(List),
-        case lists:foldr(fun(X, Acc)->
-                                 [$,, term_format(X)|Acc]
-                         end, [], List) of
-            []->[];
-            R->tl(R)
-        end).
+-spec term_format(term())->io_lib:chars().
 term_format(Term) when is_list(Term)->
     case io_lib:printable_latin1_list(Term) of
         true->io_lib:format("\"~s\"", [Term]);
@@ -80,6 +82,7 @@ term_format(Term)->
     io_lib:format("~p", [Term]).
 
 
+-spec term_format(string(), term())->io_lib:chars().
 term_format(CS, Term)->
     case lists:last(CS) of
         $p->term_format(Term);
@@ -87,6 +90,7 @@ term_format(CS, Term)->
     end.
 
 
+-spec get_cs(string(), string())->{string(), string()}.
 get_cs([H|T], CS)->
     case lists:member(H, [$c, $f, $e, $g, $s, $w, $p, $W, $P, $B, $X, $#, $b,
                           $x, $+, $n, $i]) of
@@ -95,6 +99,7 @@ get_cs([H|T], CS)->
     end.
 
 
+-spec format(string(), list())->io_lib:chars().
 format([], _)->
     [];
 format([$~|FTail1], TermList)->

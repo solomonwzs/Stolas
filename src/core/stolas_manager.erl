@@ -230,6 +230,10 @@ terminate(_Reason, _State)->
     ok.
 
 
+-spec new_task(integer(), atom(), string(), atom()|string(), atom(),
+               list({string(), string()}))->
+    {ok, pid(), atom()}
+    |{error, term()}.
 new_task(ThreadNum, Mod, Workspace, Task, LeaderNode, Resources)->
     MasterId=?task_id(Task, master),
     MasterSpec=?master_spec(MasterId, ThreadNum, Mod, Workspace, Task,

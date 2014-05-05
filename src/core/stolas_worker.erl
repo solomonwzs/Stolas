@@ -19,8 +19,10 @@
 -define(send_msg_to_master(Master, Type, Process, Detail),
         gen_server:cast(Master, {worker_msg, Type, Process, Detail})).
 
+
 start_link(RegName, Opt)->
     gen_server:start_link({local, RegName}, ?MODULE, [RegName, Opt], []).
+
 
 init([RegName, Opt])->
     process_flag(trap_exit, true),
@@ -33,6 +35,7 @@ init([RegName, Opt])->
             master=Master,
             acc=undefined
            }}.
+
 
 handle_call({alloc, PWorkerName}, {Pid, _}, State=#worker_state{
                                            master=Master,
@@ -62,6 +65,7 @@ handle_call({alloc, PWorkerName}, {Pid, _}, State=#worker_state{
     end;
 handle_call(_Msg, _From, State)->
     {reply, {error, "error message"}, State}.
+
 
 handle_cast({init, Mod, InitArgs}, State=#worker_state{
                                             workspace=Workspace,
@@ -188,11 +192,14 @@ handle_cast({accumulate, PWorkerName, Node, TaskArgs, Return},
 handle_cast(_Msg, State)->
     {noreply, State}.
 
+
 handle_info(_Msg, State)->
     {noreply, State}.
 
+
 code_change(_Vsn, State, _Extra)->
     {ok, State}.
+
 
 terminate(_Reason, _State)->
     ok.

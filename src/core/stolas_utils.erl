@@ -23,13 +23,15 @@
                     <<>>, Proplist)))/bitstring, $}>>).
 
 
+-spec readable_datetime(calendar:datetime())->io_lib:chars().
 readable_datetime(Date)->
     {{Y, M, D}, {H, MM, S}}=Date,
-    lists:flatten(io_lib:format(
-                    "~4.10.0b-~2.10.0b-~2.10.0b ~2.10.0b:~2.10.0b:~2.10.0b",
-                    [Y, M, D, H, MM, S])).
+    io_lib:format(
+      "~4.10.0b-~2.10.0b-~2.10.0b ~2.10.0b:~2.10.0b:~2.10.0b",
+      [Y, M, D, H, MM, S]).
 
 
+-spec get_config()->{ok, list(tuple())}.
 get_config()->
     {ok, #archive{
             config=Conf
@@ -51,18 +53,21 @@ get_config(ConfFile)->
     end.
 
 
+-spec is_string(list())->boolean().
 is_string([])->true;
 is_string([H|T]) when is_integer(H) andalso H>=0 andalso H=<255->
     is_string(T);
 is_string(_)->false.
 
 
+-spec is_proplist(list())->boolean().
 is_proplist([{K, _}]) when is_atom(K)->true;
 is_proplist([{K, _}|T]) when is_atom(K) orelse is_list(K)->
     is_proplist(T);
 is_proplist(_)->false.
 
 
+-spec json_encode(term())->bitstring().
 json_encode(T) when T=:=null orelse T=:=true orelse T=:=false->
     <<(atom_to_binary(T, utf8))/bitstring>>;
 json_encode(T) when is_atom(T)->
@@ -95,6 +100,7 @@ json_encode(T) when is_port(T)->
     json_encode(erlang:port_to_list(T)).
 
 
+-spec json_encode(term(), dict|gb_tree)->bitstring().
 json_encode(T, dict)->
     Proplist=dict:to_list(T),
     ?proplist_to_json(Proplist);

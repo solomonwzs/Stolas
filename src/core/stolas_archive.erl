@@ -171,6 +171,10 @@ terminate(_Reason, _Archive)->
     ok.
 
 
+-spec get_master_archive(atom())->
+    {ok, erlang:timestamp(), archive()}
+    |{master_change, erlang:timestamp(), atom()}
+    |{error, atom()}.
 get_master_archive(MasterNode)->
     try
         gen_server:call({stolas_archive, MasterNode}, get_master_archive, 1000)
@@ -182,6 +186,9 @@ get_master_archive(MasterNode)->
     end.
 
 
+-spec sync_archive(archive())->
+    {ok, erlang:timestamp(), archive()}
+    |{error, term()}.
 sync_archive(Archive=#archive{
                         master_node=MasterNode
                        })->
@@ -205,6 +212,7 @@ sync_archive(Archive=#archive{
     end.
 
 
+-spec process_conf(list({atom(), term()}))->ok.
 process_conf(Conf)->
     case proplists:get_value(ssh_files_transport, Conf, false) of
         true->ssh:start();

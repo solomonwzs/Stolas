@@ -53,10 +53,12 @@
           task_dict::dict:dict(),
           config::list(tuple()),
           master_node::atom(),
-          last_syne_time::{integer(), integer(), integer()}|nil,
+          last_syne_time::erlang:timestamp()|nil,
           status::wait_master|ok|no_master,
           role::master|sub,
           lock::{pid(), read|write}|nil
          }).
+
+-type archive()::#archive{}.
 
 -endif.
