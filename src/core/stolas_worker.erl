@@ -45,14 +45,17 @@ handle_call({alloc, PWorkerName}, {Pid, _}, State=#worker_state{
     Node=node(Pid),
     try
         Task=apply(?task_mod(Master), alloc, [Acc, PWorkerName, Node]),
+        NewAcc=
         case Task of
-            none->
-                ?send_msg_to_master(Master, 'end', alloc, null);
-            {ok, Args}->
+            {none, NA}->
+                ?send_msg_to_master(Master, 'end', alloc, null),
+                NA;
+            {{ok, Args}, NA}->
                 ?send_msg_to_master(Master, ok, alloc, {PWorkerName, Node,
-                                                        Args})
+                                                        Args}),
+                NA
         end,
-        {reply, Task, State}
+        {reply, Task, State#worker_state{acc=NewAcc}}
     catch
         T:R->
             ?send_msg_to_master(Master, error, alloc,

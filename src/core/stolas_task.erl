@@ -5,15 +5,15 @@
     {ok, Acc::term()}|{error, Reason::term()}.
 
 -callback alloc(Acc::term(), WorkerName::atom(), Node::atom())->
-    {ok, TaskArgs::term()}|none.
+    {{ok, TaskArgs::term()}|none, NewAcc::term()}.
 
 -callback map(Workspace::string(), TaskArgs::term())->
     {ok, Result::term()}|{error, Reason::term()}.
 
 -callback accumulate(Workspace::string(), Acc::term(), WorkerName::atom(),
                      Node::atom(), TaskArgs::term(),
-                     Return::{ok, Result::term()}|{error, Reason::term()})->
-    {ok, NewAcc::term()}|{error, Reaason::term()}.
+                     Return::{ok, Result::term()}|{error, Reason1::term()})->
+    {ok, NewAcc::term()}|{error, Reason2::term()}.
 
 -callback reduce(Workspace::string(), Acc::term())->
     {ok, Result::term()}|{error, Reason::term()}.
