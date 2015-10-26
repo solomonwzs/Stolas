@@ -88,7 +88,7 @@ handle_call(Msg={set_archive, NewArchive, Pid, write}, _From,
             {reply, ok, NewArchive#archive{lock=nil}};
         MasterNode=/=node()->
             case gen_server:call({stolas_archive, MasterNode}, Msg) of
-                ok->{reply, ok, NewArchive#archive{last_syne_time=now()}};
+                ok->{reply, ok, NewArchive#archive{last_syne_time=?now}};
                 Err={error, _}->{reply, Err, Archive}
             end;
         true->{reply, {error, lock_not_match}, Archive}
@@ -109,7 +109,7 @@ handle_call(get_master_archive, _From, Archive=#archive{
                                                   master_node=MasterNode,
                                                   status=ok
                                                  }) when MasterNode=:=node()->
-    {reply, {ok, now(), Archive}, Archive};
+    {reply, {ok, ?now, Archive}, Archive};
 handle_call(get_master_archive, _From, Archive=#archive{
                                                   master_node=MasterNode,
                                                   status=ok,
